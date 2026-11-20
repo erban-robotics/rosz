@@ -97,7 +97,7 @@ bindings/wasm/build.sh && node --test bindings/wasm/test/
 ```bash
 scripts/jazzy/setup.sh                     # 起容器 rosz-jazzy (宿主网络, apt 源为 ROS 快照, 钉 rmw_zenoh_cpp 0.2.11)
 scripts/jazzy/start.sh                     # 容器内起 rmw_zenohd (7447) 与测试发布端
-(cd bindings/python && maturin build --release --zig --compatibility manylinux2014 --out ../../dist)
+(cd bindings/python && maturin build --release --zig --compatibility manylinux2014 --out ../../dist)   # 需在装了 maturin 与 ziglang 的 venv 里跑
 scripts/jazzy/e2e.sh
 docker rm -f rosz-jazzy
 ```

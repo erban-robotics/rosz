@@ -150,7 +150,7 @@ pub fn decode_png_depth(png: &[u8]) -> Result<DepthImage, MediaError> {
         return Err(MediaError::Unsupported(format!("深度 PNG 应为 16 位灰度, 实为 {:?} {:?}", info.color_type, info.bit_depth)));
     }
     // PNG 内 16 位为大端
-    let data = buf.chunks_exact(2).map(|c| u16::from_be_bytes([c[0], c[1]])).collect();
+    let data = buf.as_chunks::<2>().0.iter().map(|c| u16::from_be_bytes([c[0], c[1]])).collect();
     Ok(DepthImage { width: info.width, height: info.height, data })
 }
 
@@ -202,7 +202,7 @@ impl DepthImage {
         }
         let (x, y) = if color_w >= dw {
             let k = color_w / dw;
-            if color_w % dw != 0 || color_h != dh * k {
+            if !color_w.is_multiple_of(dw) || color_h != dh * k {
                 return Err(unaligned);
             }
             (u / k, v / k)
@@ -272,7 +272,7 @@ fn decode_png_color(data: &[u8]) -> Result<RgbImage, MediaError> {
     let channels = info.color_type.samples();
     let data = match info.color_type {
         png::ColorType::Rgb => buf,
-        png::ColorType::Rgba => buf.chunks_exact(4).flat_map(|p| [p[0], p[1], p[2]]).collect(),
+        png::ColorType::Rgba => buf.as_chunks::<4>().0.iter().flat_map(|p| [p[0], p[1], p[2]]).collect(),
         png::ColorType::Grayscale | png::ColorType::GrayscaleAlpha => {
             buf.chunks_exact(channels).flat_map(|p| [p[0]; 3]).collect()
         }
@@ -318,7 +318,7 @@ fn raw_depth(value: &Value) -> Result<DepthImage, MediaError> {
     let (width, height, rows) = rows(value, if is_float { 4 } else { 2 })?;
     let data = if is_float {
         rows.iter()
-            .flat_map(|row| row.chunks_exact(4))
+            .flat_map(|row| row.as_chunks::<4>().0)
             .map(|c| {
                 let bytes = [c[0], c[1], c[2], c[3]];
                 let meters = if big_endian { f32::from_be_bytes(bytes) } else { f32::from_le_bytes(bytes) };
@@ -327,7 +327,7 @@ fn raw_depth(value: &Value) -> Result<DepthImage, MediaError> {
             .collect()
     } else {
         rows.iter()
-            .flat_map(|row| row.chunks_exact(2))
+            .flat_map(|row| row.as_chunks::<2>().0)
             .map(|c| if big_endian { u16::from_be_bytes([c[0], c[1]]) } else { u16::from_le_bytes([c[0], c[1]]) })
             .collect()
     };
