@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/decode"]
+members = ["crates/decode", "crates/access", "apps/cli"]
 
 
 [workspace.package]

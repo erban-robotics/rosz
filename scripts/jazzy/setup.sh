@@ -14,7 +14,7 @@ apt-get update -qq
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --allow-downgrades \
   ros-jazzy-rmw-zenoh-cpp=0.2.11-1noble.20260915.171026 ros-jazzy-test-msgs ros-jazzy-common-interfaces \
   ros-jazzy-tf2-msgs ros-jazzy-rosidl-default-generators ros-jazzy-ament-cmake build-essential \
-  python3-numpy python3-pil >/dev/null
+  python3-numpy python3-pil python3-zstandard >/dev/null
 # erban 自定义类型: 用仓库内 .msg 现编一个包, 供金样本与发布用
 mkdir -p /ws/src && cp -r /rosz/messages/erban/hand /ws/src/
 cat > /ws/src/hand/package.xml <<'XML'

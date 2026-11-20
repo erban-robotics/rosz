@@ -1,0 +1,19 @@
+[package]
+name = "rosz-cli"
+description = "rosz 命令行: 不装 ROS 查看与采集 ROS 2 话题"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "rosz"
+path = "src/main.rs"
+
+[dependencies]
+rosz-access.workspace = true
+rosz-decode = { workspace = true, features = ["jpeg", "json"] }
+tokio.workspace = true
+serde_json.workspace = true
+clap = { version = "4", features = ["derive", "env"] }
+jpeg-encoder = "0.6"
