@@ -89,7 +89,7 @@ if let Some(msg) = session.latest("/joint_states", std::time::Duration::from_sec
 
 ```bash
 cargo test -p rosz-decode                  # 金样本回归: 逐字段对照 rclpy, 188 个类型 RIHS01 对照 rosidl
-bindings/wasm/build.sh && node --test bindings/wasm/test/
+bindings/wasm/build.sh && node --test bindings/wasm/test/decode.test.mjs
 ```
 
 互通测试用一次性 jazzy 容器发布 (不连机器人), 本机在无 ROS 的 venv 里装 wheel 接收:

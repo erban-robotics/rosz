@@ -1,4 +1,4 @@
-// WASM 解码与 Python 侧 (rclpy 参照值) 一致; 先 ./build.sh, 再 node --test test/
+// WASM 解码与 Python 侧 (rclpy 参照值) 一致; 先 ./build.sh, 再 node --test test/decode.test.mjs
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { test } from "node:test";
