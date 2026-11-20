@@ -1,0 +1,23 @@
+# 推送与 PR: 解码金样本回归 + WASM 解码测试. 只用 GitHub 托管 runner (公开仓库不用自托管)
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen@0.2.130
+      - run: cargo test --workspace --exclude rosz-python --exclude rosz-wasm
+      - run: bindings/wasm/build.sh
+      - run: node --test bindings/wasm/test/

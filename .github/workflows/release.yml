@@ -1,0 +1,129 @@
+# 推 vX.Y.Z tag: 构建 Python wheel (x86_64 + aarch64, abi3), WASM npm tgz, CLI 静态二进制 (musl), 挂到 GitHub Release.
+# 只用 GitHub 托管 runner (公开仓库下 fork PR 可在自托管 runner 上执行代码, 不用 .99)
+name: release
+on:
+  push:
+    tags: ["v*.*.*"]
+permissions:
+  contents: read
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: tag 与 workspace 版本一致
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          test "v$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME 与 Cargo.toml 版本 $version 不符"; exit 1; }
+
+  wheels:
+    needs: version
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install "maturin>=1.9,<2" ziglang
+      - name: maturin --zig 出 manylinux2014 abi3 wheel
+        working-directory: bindings/python
+        run: |
+          for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu; do
+            maturin build --release --target $target --zig --compatibility manylinux2014 --out ../../dist
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels
+          path: dist/*.whl
+
+  wheels-smoke:
+    needs: wheels
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheels
+          path: dist
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: 装 wheel 并导入 (无 ROS)
+        run: |
+          pip install dist/*_${{ matrix.arch }}.whl
+          python -c "import rosz; print(rosz.__version__)"
+
+  wasm:
+    needs: version
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen@0.2.130
+      - run: bindings/wasm/build.sh
+      - run: node --test bindings/wasm/test/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm
+          path: dist/*.tgz
+
+  cli:
+    needs: version
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        target: [x86_64-unknown-linux-musl, aarch64-unknown-linux-musl]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # ring (zenoh 依赖) 要 C 编译器: 用 zig 交叉编出 musl 静态二进制
+      - run: pip install ziglang
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-zigbuild
+      - run: cargo zigbuild --release --locked --target ${{ matrix.target }} -p rosz-cli
+      - run: |
+          mkdir -p dist
+          arch=${{ matrix.target }}; arch=${arch%%-*}
+          cp target/${{ matrix.target }}/release/rosz dist/rosz-${GITHUB_REF_NAME#v}-linux-$arch
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-${{ matrix.target }}
+          path: dist/rosz-*
+
+  release:
+    needs: [wheels-smoke, wasm, cli]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: 建 Release 并上传全部产物
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --notes-file - <<NOTES
+          安装方式见 README. Python: \`pip install rosz --find-links https://github.com/${GITHUB_REPOSITORY}/releases/expanded_assets/${GITHUB_REF_NAME}\`
+          NOTES
