@@ -10,7 +10,7 @@
 
 - Python (x86_64 / aarch64, Python 3.10+): `pip install rosz --find-links https://github.com/erban-robotics/rosz/releases/expanded_assets/v0.1.0`
 - CLI: 下载 `rosz-0.1.0-linux-x86_64` (或 `-aarch64`), musl 静态二进制, `chmod +x` 即用
-- npm (浏览器解码): `"@erban-robotics/rosz-wasm": "https://github.com/erban-robotics/rosz/releases/download/v0.1.0/erban-robotics-rosz-wasm-0.1.0.tgz"`
+- npm (浏览器解码): `"@erban-robotics/rosz-wasm": "https://github.com/erban-robotics/rosz/releases/download/v0.1.0/erban-robotics-rosz-wasm-0.1.0.tgz"`. npm 12 起默认 `allow-remote=none`, 拒装远程 tgz, 需在项目 `.npmrc` 写 `allow-remote=all` (或安装时加 `--allow-remote=all`)
 - Rust: `rosz-access = { git = "https://github.com/erban-robotics/rosz", tag = "v0.1.0" }` (只解码用 `rosz-decode`)
 
 ## router 地址
