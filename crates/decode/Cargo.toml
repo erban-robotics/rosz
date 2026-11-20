@@ -1,0 +1,25 @@
+[package]
+name = "rosz-decode"
+description = "按 .msg 定义解码 ROS 2 (XCDR1) 消息, 计算 RIHS01, 解码相机图像与深度"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[features]
+default = ["jpeg", "json"]
+# JPEG 转 RGB; WASM 不带 (浏览器自己解 JPEG)
+jpeg = ["dep:zune-jpeg"]
+# 值树转 serde_json::Value
+json = ["dep:serde_json"]
+
+[dependencies]
+sha2 = "0.10"
+thiserror.workspace = true
+zstd = { version = "0.13", default-features = false }
+png = "0.18"
+zune-jpeg = { version = "0.4", optional = true }
+serde_json = { workspace = true, optional = true }
+
+[dev-dependencies]
+serde_json = { workspace = true, features = ["float_roundtrip"] }

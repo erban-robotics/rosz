@@ -1,0 +1,35 @@
+[workspace]
+resolver = "3"
+members = ["crates/decode"]
+
+
+[workspace.package]
+# 整个 workspace 统一版本号, 一个 tag 一起发 (Python 与 npm 包版本同此)
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+repository = "https://github.com/erban-robotics/rosz"
+
+[workspace.dependencies]
+rosz-decode = { path = "crates/decode", version = "0.1.0", default-features = false }
+rosz-access = { path = "crates/access", version = "0.1.0" }
+thiserror = "2"
+serde_json = { version = "1", features = ["preserve_order"] }
+# 现场 router 为 zenoh 1.7.2, 1.9.0 以 client/peer 连接已实测可用 (robot-state-rust lessons)
+zenoh = { version = "=1.9.0", default-features = false, features = ["transport_tcp"] }
+zenoh-ext = { version = "=1.9.0", features = ["unstable"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
+strip = "debuginfo"
+
+# WASM 用: 体积优先
+[profile.wasm]
+inherits = "release"
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = "none"
