@@ -1,0 +1,17 @@
+[build-system]
+requires = ["maturin>=1.9,<2"]
+build-backend = "maturin"
+
+[project]
+name = "rosz"
+description = "不装 ROS, 直连 Zenoh 读取 ROS 2 (rmw_zenoh) 话题: 图像为 numpy, 消息为 dict"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.21"]
+dynamic = ["version"]
+readme = "README.md"
+
+[project.urls]
+Repository = "https://github.com/erban-robotics/rosz"
+
+[tool.maturin]
+features = []
