@@ -1,4 +1,5 @@
 //! 把仓库 `messages/jazzy` 与 `messages/erban` 下的全部 `.msg` 编进二进制: 生成 `(类型名, 文本)` 表.
+//! 文本去掉注释与空行再嵌入 (约 130 KB 减到 20 KB, WASM 体积要紧).
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -17,7 +18,9 @@ fn main() {
     entries.sort();
     let mut out = String::from("pub(crate) static BUILTIN: &[(&str, &str)] = &[\n");
     for (name, path) in &entries {
-        writeln!(out, "    ({name:?}, include_str!({:?})),", path.display().to_string()).unwrap();
+        println!("cargo:rerun-if-changed={}", path.display());
+        let text = strip_comments(&fs::read_to_string(path).unwrap());
+        writeln!(out, "    ({name:?}, {text:?}),").unwrap();
     }
     out.push_str("];\n");
     fs::write(PathBuf::from(env::var("OUT_DIR").unwrap()).join("builtin.rs"), out).unwrap();
@@ -38,4 +41,20 @@ fn collect(root: &Path, entries: &mut Vec<(String, PathBuf)>) {
             }
         }
     }
+}
+
+/// 去掉整行注释, 空行, 以及非字符串行的行尾注释 (字符串常量与默认值里可能有 `#`, 保留原样).
+fn strip_comments(text: &str) -> String {
+    let mut out = String::new();
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let is_string = trimmed.starts_with("string") || trimmed.starts_with("wstring");
+        let kept = if is_string { trimmed } else { trimmed.split('#').next().unwrap().trim_end() };
+        out.push_str(kept);
+        out.push('\n');
+    }
+    out
 }

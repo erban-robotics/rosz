@@ -1,0 +1,24 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>rosz-wasm 浏览器自测</title>
+<pre id="out">运行中...</pre>
+<script type="module">
+// 在仓库根起静态服务后打开 /bindings/wasm/test/browser.html (先 ./build.sh)
+import init, { Decoder } from "../pkg/rosz_wasm.js";
+await init();
+const expected = await (await fetch("/messages/golden/expected.json")).json();
+const plain = (v) =>
+  ArrayBuffer.isView(v) ? Array.from(v, plain)
+  : Array.isArray(v) ? v.map(plain)
+  : typeof v === "bigint" ? Number(v)
+  : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, plain(x)]))
+  : v;
+const decoder = new Decoder();
+const lines = [];
+for (const c of ["sensor_msgs.JointState", "sensor_msgs.CompressedImage", "tf2_msgs.TFMessage"]) {
+  const bytes = new Uint8Array(await (await fetch(`/messages/golden/rmw_zenoh_cpp/${c}.cdr`)).arrayBuffer());
+  const got = plain(decoder.decode(expected[c].type, bytes).tree);
+  lines.push(`${c}: ${JSON.stringify(got) === JSON.stringify(expected[c].value) ? "一致" : "不一致"}`);
+}
+document.getElementById("out").textContent = lines.join("\n");
+</script>

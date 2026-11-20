@@ -109,16 +109,31 @@ pub fn depth_from_compressed(format: &str, data: &[u8]) -> Result<DepthImage, Me
 
 /// erban `16UC1; zstd`: 4 字节小端头 (`u16 宽`, `u16 高`) + zstd 帧.
 pub fn decode_zstd_depth(data: &[u8]) -> Result<DepthImage, MediaError> {
+    thread_local! {
+        // 复用解压上下文: 每帧新建要分配约百 KB
+        static DECOMPRESSOR: std::cell::RefCell<Option<zstd::bulk::Decompressor<'static>>> = const { std::cell::RefCell::new(None) };
+    }
     let header = data.get(..4).ok_or_else(|| MediaError::Corrupt("zstd 深度缺 4 字节头".into()))?;
     let width = u16::from_le_bytes([header[0], header[1]]) as u32;
     let height = u16::from_le_bytes([header[2], header[3]]) as u32;
-    let expected = width as usize * height as usize * 2;
-    let raw = zstd::bulk::decompress(&data[4..], expected).map_err(|e| MediaError::Corrupt(format!("zstd: {e}")))?;
-    if raw.len() != expected {
-        return Err(MediaError::Corrupt(format!("zstd 解压得 {} 字节, 应为 {width}x{height}x2", raw.len())));
+    let mut pixels = vec![0u16; width as usize * height as usize];
+    // 直接解压进 u16 缓冲, 省一次拷贝与逐元素转换
+    // SAFETY: u16 任意位模式都合法, u8 对齐要求不高于 u16, 长度按字节数算
+    let bytes = unsafe { std::slice::from_raw_parts_mut(pixels.as_mut_ptr().cast::<u8>(), pixels.len() * 2) };
+    let written = DECOMPRESSOR.with_borrow_mut(|cell| {
+        let decompressor = match cell {
+            Some(d) => d,
+            None => cell.insert(zstd::bulk::Decompressor::new().map_err(|e| MediaError::Corrupt(format!("zstd: {e}")))?),
+        };
+        decompressor.decompress_to_buffer(&data[4..], bytes).map_err(|e| MediaError::Corrupt(format!("zstd: {e}")))
+    })?;
+    if written != pixels.len() * 2 {
+        return Err(MediaError::Corrupt(format!("zstd 解压得 {written} 字节, 应为 {width}x{height}x2")));
     }
-    let data = raw.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
-    Ok(DepthImage { width, height, data })
+    if cfg!(target_endian = "big") {
+        pixels.iter_mut().for_each(|v| *v = u16::from_le(*v));
+    }
+    Ok(DepthImage { width, height, data: pixels })
 }
 
 /// compressed_depth_image_transport: 12 字节 ConfigHeader (`int32 格式`, `float32[2] 量化参数`) + 16 位 PNG.

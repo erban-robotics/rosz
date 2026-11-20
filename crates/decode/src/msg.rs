@@ -109,7 +109,7 @@ pub struct MessageDef {
     pub name: String,
     pub fields: Vec<Field>,
     pub constants: Vec<Constant>,
-    /// 原 `.msg` 文本
+    /// `.msg` 文本 (内置类型已去掉注释)
     pub text: String,
     /// 原文无字段: `fields` 只有补的占位字段, 线上占 1 字节, 值树里不出现 (同 rclpy)
     pub is_empty: bool,

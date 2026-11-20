@@ -1,0 +1,17 @@
+[package]
+name = "rosz-wasm"
+description = "rosz 浏览器解码模块"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# 不带 JPEG (浏览器自己解) 与 serde_json
+rosz-decode = { workspace = true }
+wasm-bindgen = "=0.2.130"
+js-sys = "0.3"
