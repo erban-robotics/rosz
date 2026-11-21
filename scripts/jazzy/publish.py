@@ -12,6 +12,7 @@
 - /wrist/depth/zstd         CompressedImage `16UC1; zstd` 640x480 (未对齐, 与彩色不成整数倍)
 - /test/basic               test_msgs/BasicTypes (rosz 不内置 test_msgs: 无法解码)
 - /silent                   JointState, 有发布端但从不发
+- /mixed_durability         String, 两个发布端: volatile 的从不发, transient_local 的只发一次 "latched"
 查看器手动验收另用的话题 (值随时间变, 不进参照):
 - /view/joint_states        JointState 100 Hz, position / velocity 为正弦
 - /view/hand/pressure       hand/PressureSensor 20 Hz, 6 路正弦
@@ -42,7 +43,7 @@ from builtin_interfaces.msg import Time
 from geometry_msgs.msg import TransformStamped
 from hand.msg import PressureSensor
 from sensor_msgs.msg import CompressedImage, Image, JointState
-from std_msgs.msg import Header
+from std_msgs.msg import Header, String
 from test_msgs.msg import BasicTypes
 from tf2_msgs.msg import TFMessage
 
@@ -128,6 +129,9 @@ class Publisher(Node):
         static = TFMessage(transforms=transforms[:1])
         latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.create_publisher(TFMessage, "/tf_static", latched).publish(static)
+        # 同一话题 durability 不一的发布端: 订阅端应按 transient_local 取到历史
+        self.create_publisher(String, "/mixed_durability", 10)
+        self.create_publisher(String, "/mixed_durability", latched).publish(String(data="latched"))
 
         os.makedirs(out_dir, exist_ok=True)
         expected = {topic: plain(msg) for topic, (msg, _, _) in self.messages.items()}

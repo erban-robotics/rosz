@@ -1,13 +1,17 @@
 /**
  * 查看器适配器: 经 WebSocket (`foxglove.websocket.v1` 子集, 见 apps/view/src/protocol.rs) 接后端, 写 rosz-ui 的实时状态.
  * - 通道目录: 后端 `advertise` / `unadvertise` -> `upsertChannels` / `removeChannels`. `CompressedImage` 与 `Image` 为图像通道,
- *   其余为结构化消息. 图像的角色 (相机 / 深度) 等首帧按 format 定
+ *   `TFMessage` 与 `PointCloud2` 为空间通道 (画在查看器自己的 3D 面板里, 见 scene.ts), 其余为结构化消息. 图像的角色 (相机 / 深度)
+ *   等首帧按 format 定
  * - 订阅: 跟着状态的需求窗口走, 窗口里出现的通道才订阅, 不再出现即退订; 解不了的不订阅
  * - 样本: 接收时刻取数据帧里后端 PC 时钟的接收时间 (不用浏览器时钟), 采样时刻由 rosz-wasm 解 Header; 图像换成面板吃的
- *   `format` + 压缩字节 (见 images.ts). 面板显示不了的图像 (不认识的格式, 空数据) 整路标为解不了并退订, 原因显示在话题树与面板上
+ *   `format` + 压缩字节 (见 images.ts). 面板显示不了的图像 (不认识的格式, 空数据) 整路标为解不了并退订, 原因显示在话题树与面板上.
+ *   空间话题解出的变换与点写进 3D 面板的数据 (scene.ts), 状态里只记样本 (点云不带点)
  */
 import { type ChannelInfo, createDataSourceState, type DataSource, loadRosz, type Rosz, type Sample } from '@erban-robotics/rosz-ui'
 import { COMPRESSED_IMAGE, type Converted, fromCompressed, fromRaw, isImageType, roleOf } from './images'
+import { fromPointCloud2, type PointCloud2 } from './pointcloud'
+import { createScene, type Scene, spatialTypeOf, TF_MESSAGE } from './scene'
 
 const SUBPROTOCOL = 'foxglove.websocket.v1'
 const MESSAGE_DATA_OPCODE = 0x01
@@ -28,17 +32,19 @@ type AdvertisedChannel = {
 
 export type ConnectionStatus = 'connecting' | 'open' | 'closed'
 
-export type Viewer = { dataSource: DataSource }
+export type Viewer = { dataSource: DataSource; scene: Scene }
 
 /**
  * 通道目录的一项: id 用话题名 (同名话题换类型时后端给新通道号, 目录里覆盖同一项). `role` 为首帧定的图像角色,
  * `issue` 为前端发现的解不了的原因 (图像格式), 与后端给的同样变灰
  */
 function channelInfo(channel: AdvertisedChannel, role: string | null, issue: string | null): ChannelInfo {
+  const spatial = spatialTypeOf(channel.schemaName)
   return {
     id: channel.topic,
-    kind: isImageType(channel.schemaName) ? 'image' : 'message',
+    kind: isImageType(channel.schemaName) ? 'image' : spatial ? 'spatial' : 'message',
     name: channel.topic,
+    // 空间通道也写 ROS 类型 (话题树显示, 按类型搜索); 不进 rosz-ui 的 3D 场景, 不用它的细分种类
     type: channel.schemaName,
     role,
     isStatic: channel.transientLocal ?? false,
@@ -72,6 +78,7 @@ export function connect(onReady: (viewer: Viewer) => void, onStatus: (status: Co
   onStatus('connecting')
 
   const state = createDataSourceState({ mode: 'live' })
+  const scene = createScene()
   const channels = new Map<number, AdvertisedChannel>()
   const channelByTopic = new Map<string, number>()
   // 订阅号 -> 通道号; 通道号 -> 订阅号
@@ -121,7 +128,7 @@ export function connect(onReady: (viewer: Viewer) => void, onStatus: (status: Co
     switch (message.op) {
       case 'serverInfo': {
         const metadata = (message.metadata ?? {}) as { startTime?: string }
-        onReady({ dataSource: { state, zero: BigInt(metadata.startTime ?? '0') } })
+        onReady({ dataSource: { state, zero: BigInt(metadata.startTime ?? '0') }, scene })
         break
       }
       case 'advertise': {
@@ -153,6 +160,7 @@ export function connect(onReady: (viewer: Viewer) => void, onStatus: (status: Co
             subscriptionChannel.delete(subscription)
           }
           removed.push(channel.topic)
+          if (spatialTypeOf(channel.schemaName)) scene.removeTopic(channel.topic)
         }
         state.removeChannels(removed)
         break
@@ -214,6 +222,17 @@ export function connect(onReady: (viewer: Viewer) => void, onStatus: (status: Co
             ? fromCompressed(tree.format as string, tree.data as Uint8Array)
             : fromRaw(tree as Parameters<typeof fromRaw>[0])
         onImage(channel, receiveTime, sampleTime, converted)
+      } else if (spatialTypeOf(channel.schemaName) && isDecodable) {
+        const { tree } = rosz.decoder.decode(channel.schemaName, data) as { tree: Record<string, unknown> }
+        if (channel.schemaName === TF_MESSAGE) {
+          scene.applyTf(channel.topic, tree.transforms as Parameters<Scene['applyTf']>[1])
+          state.append(channel.topic, [{ receiveTime, sampleTime, payload: { encoding: 'cdr', data } }])
+        } else {
+          const cloud = fromPointCloud2(tree as PointCloud2)
+          if ('issue' in cloud) return markIssue(channel, cloud.issue)
+          scene.setCloud(channel.topic, cloud)
+          state.append(channel.topic, [{ receiveTime, sampleTime, payload: { frame: cloud.frame, points: cloud.total } }])
+        }
       } else {
         state.append(channel.topic, [{ receiveTime, sampleTime, payload: { encoding: 'cdr', data } }])
       }
