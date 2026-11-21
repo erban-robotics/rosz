@@ -7,7 +7,7 @@ import { useClockListener, useClockSelector } from '../playback/use-playback'
 import { latestIndexAtOrBefore } from '../timeline/timeline'
 import { useViewComposition } from '../views/view-context'
 import { type DecodedFrame, decodeImage } from './decode'
-import { createDepthRenderer, type DepthRenderer, depthRange } from './depth-renderer'
+import { createDepthRenderer, DEPTH_FAR_MILLIMETERS, DEPTH_NEAR_MILLIMETERS, type DepthRenderer } from './depth-renderer'
 import { type ImageOverlay, isOverlayKind, type KeypointsFrame, overlayFrameAt, type SegmentationFrame } from './image-overlay'
 import { useVideoPainter } from './video-decoder'
 import { demandStartOf, isVideoFormat, samplesToDecode } from './video-keyframes'
@@ -143,7 +143,7 @@ function SampleDeviation({ sampleTime }: { sampleTime: bigint }) {
 }
 
 // 画在canvas上的一帧: 彩色画2D, 深度用WebGL2伪彩色; 深度另留毫米值供悬停读
-type Painted = { width: number; height: number; depth: { data: Uint16Array; near: number; far: number } | null }
+type Painted = { width: number; height: number; depth: { data: Uint16Array } | null }
 
 /**
  * 把一个图像样本解码画到canvas上, 换样本即重解; `isActive`为false (tab未显示) 时不解. 解码中又来新样本时只解最新的,
@@ -186,9 +186,8 @@ function useDecodedCanvas(payload: ImagePayload | undefined, videoPlan: Sample<I
     if (!canvas) return
     if (rendererRef.current === undefined) rendererRef.current = createDepthRenderer(canvas)
     if (!rendererRef.current) throw new Error('浏览器不支持WebGL2, 无法显示深度')
-    const { near, far } = depthRange(frame.data)
-    rendererRef.current.draw(frame, near, far)
-    setPainted({ width: frame.width, height: frame.height, depth: { data: frame.data, near, far } })
+    rendererRef.current.draw(frame, DEPTH_NEAR_MILLIMETERS, DEPTH_FAR_MILLIMETERS)
+    setPainted({ width: frame.width, height: frame.height, depth: { data: frame.data } })
   }, [])
 
   useEffect(() => {
@@ -258,7 +257,7 @@ function DepthReadout({ painted, hover }: { painted: Painted; hover: { x: number
     <span className="pointer-events-none absolute top-1 left-1 rounded-sm bg-surface-2/90 px-1.5 font-mono text-xs text-foreground-secondary">
       {hover
         ? `(${hover.x}, ${hover.y}) ${value === 0 ? '无效' : `${value} mm`}`
-        : `${depth.near}-${depth.far} mm`}
+        : `${DEPTH_NEAR_MILLIMETERS}-${DEPTH_FAR_MILLIMETERS} mm`}
     </span>
   )
 }

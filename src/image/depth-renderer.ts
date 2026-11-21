@@ -1,5 +1,5 @@
 /**
- * 深度伪彩色: uint16毫米原样传成WebGL2的R16UI纹理, 片元着色器按 [near, far] 归一化后用turbo上色, 0 (无效) 画黑.
+ * 深度伪彩色: uint16毫米原样传成WebGL2的R16UI纹理, 片元着色器按 [near, far] 归一化 (量程外截到两端) 后用turbo上色, 0 (无效) 画黑.
  * 整数纹理只能NEAREST取样 (深度本就不该插值); near/far走uniform, 改量程不重传数据. 每帧上传+绘制 < 0.4ms (research 03).
  */
 
@@ -117,15 +117,6 @@ export function createDepthRenderer(canvas: HTMLCanvasElement): DepthRenderer | 
   }
 }
 
-// 抽样取量程: 非零值的最小与最大 (毫米); 全零时给 [0, 1]
-export function depthRange(data: Uint16Array, stride = 7) {
-  let near = Infinity
-  let far = 0
-  for (let index = 0; index < data.length; index += stride) {
-    const value = data[index]
-    if (value === 0) continue
-    if (value < near) near = value
-    if (value > far) far = value
-  }
-  return near === Infinity ? { near: 0, far: 1 } : { near, far: Math.max(far, near + 1) }
-}
+// 伪彩色的固定量程 (毫米): 逐帧按自身范围归一化会闪烁; 量程外截到两端
+export const DEPTH_NEAR_MILLIMETERS = 200
+export const DEPTH_FAR_MILLIMETERS = 2000

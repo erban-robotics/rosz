@@ -2,7 +2,7 @@
  * 回放 capture.py 录下的真实话题: 按原节奏追加进实时模式的状态 (循环播), 用包的面板显示.
  * 查询参数: `capture` 录制目录名 (默认head); `copies` 彩色图像复制成几路 (测多路CPU, 默认1);
  * `depth` 只放哪种深度 (`zstd` 或 `png`, 默认都放); `messages=0` 不放结构化消息;
- * `mode=offline` 改按离线回放: 图像通道给帧时刻表, 按需求窗口以1秒为块写入 (同ADP适配器的做法), 有播放控件与时间轴切换.
+ * `mode=offline` 改按离线回放: 图像通道给帧时刻表, 按需求窗口以1秒为块写入, 有播放控件与时间轴切换.
  * 视频录制 (`capture=video`, 由encode-video.mjs造): 每路给关键帧, 页面上`await compareVideo(话题, 帧号)`把画面与ffmpeg解出的同帧PNG比对
  */
 import { StrictMode, useEffect, useState } from 'react'

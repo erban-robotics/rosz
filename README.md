@@ -4,7 +4,7 @@ rosz 的共享可视化 UI 包: 数据源状态, 播放时钟与回放 / 实时�
 
 - 接缝在包内的前端状态: 适配器 (ADP, webapp, 查看器) 写通道目录与样本, 订阅状态发出的需求窗口; 面板只读状态与播放时钟. 状态, 时钟为纯 TS 对象, React 侧只有 Provider, 钩子与面板
 - 首批组件: 视图组装 (可拖拽的布局系统) 与播放控件, 图像面板 (彩色, 视频, 深度伪彩色, 2D 叠加), 序列泳道 (uplot), 事件轨, 3D 场景, 消息树, 通道列表
-- 解码在渲染时做: JPEG / PNG 由浏览器解 (支持 WebCodecs `ImageDecoder` 时用它, 否则 `createImageBitmap`), 深度 (`16UC1; zstd`, `16UC1; compressedDepth`) 与 CDR 用 rosz 核心库 WASM (`@erban-robotics/rosz-wasm`), 深度经 WebGL2 R16UI 纹理上 turbo 伪彩色, 悬停读毫米值. 未显示的面板不解码
+- 解码在渲染时做: JPEG / PNG 由浏览器解 (支持 WebCodecs `ImageDecoder` 时用它, 否则 `createImageBitmap`), 深度 (`16UC1; zstd`, `16UC1; compressedDepth`) 与 CDR 用 rosz 核心库 WASM (`@erban-robotics/rosz-wasm`), 深度经 WebGL2 R16UI 纹理上 turbo 伪彩色 (固定量程 200-2000 mm, 逐帧归一化会闪烁), 悬停读毫米值. 未显示的面板不解码
 
 ## 安装
 
