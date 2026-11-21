@@ -5,7 +5,7 @@
  * 面板要看哪些话题, 适配器就订阅哪些 (见 layout.ts, adapter.ts). Ctrl+K 按名或类型搜话题 (见 search.tsx).
  * 面板排布与曲线所选字段本机记住. 后端发送队列丢了小消息时顶上提示累计条数 (见 drops.ts).
  */
-import { lazy, StrictMode, Suspense, useEffect, useMemo, useState } from 'react'
+import { Component, lazy, type ReactNode, StrictMode, Suspense, useEffect, useMemo, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { type ChannelInfo, ChannelList, HintProvider, type Playback, useCatalog, useLivePlayback, ViewComposition } from '@erban-robotics/rosz-ui'
 import { connect, type ConnectionStatus, type Viewer } from './adapter'
@@ -40,6 +40,21 @@ function DropNotice({ viewer }: { viewer: Viewer }) {
       前端处理不过来, 后端已丢 (累计): {listed.join(', ')}
     </p>
   )
+}
+
+/** 3D 面板出错 (典型是浏览器拿不到 WebGL) 只在面板内提示, 不让整页白屏; 改选话题后重试 */
+class PanelBoundary extends Component<{ resetKey: string; children: ReactNode }, { error?: Error; resetKey: string }> {
+  state: { error?: Error; resetKey: string } = { resetKey: this.props.resetKey }
+  static getDerivedStateFromError(error: Error) {
+    return { error }
+  }
+  static getDerivedStateFromProps(props: { resetKey: string }, state: { resetKey: string }) {
+    return props.resetKey === state.resetKey ? null : { error: undefined, resetKey: props.resetKey }
+  }
+  render() {
+    if (!this.state.error) return this.props.children
+    return <p className="p-2 text-xs text-status-warning">3D 面板无法显示: {this.state.error.message}</p>
+  }
 }
 
 function Workspace({ viewer }: { viewer: Viewer }) {
@@ -84,9 +99,11 @@ function Workspace({ viewer }: { viewer: Viewer }) {
             </div>
             {sceneTopics.length > 0 && (
               <div className="min-w-0 flex-[2]">
-                <Suspense fallback={<p className="text-xs text-muted-foreground">加载 3D 面板</p>}>
-                  <ScenePanel dataSource={dataSource} scene={scene} topics={sceneTopics} catalog={catalog} />
-                </Suspense>
+                <PanelBoundary resetKey={sceneTopics.join('\n')}>
+                  <Suspense fallback={<p className="text-xs text-muted-foreground">加载 3D 面板</p>}>
+                    <ScenePanel dataSource={dataSource} scene={scene} topics={sceneTopics} catalog={catalog} />
+                  </Suspense>
+                </PanelBoundary>
               </div>
             )}
           </div>
