@@ -8,6 +8,7 @@
 //!
 //! 通道声明在 foxglove 字段 (`id` `topic` `encoding` `schemaName` `schema` `schemaEncoding`) 之外附 `typeHash` (RIHS01),
 //! `undecodable` (解不了的原因, 能解为 null), `transientLocal`; 第三方客户端忽略这些键.
+//! 丢帧通知为 `status` 帧附 `subscriptionId` 与 `dropped` (本次告知的条数), 见 [`crate::outbox`].
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -17,14 +18,14 @@ use axum::extract::ws::{Message as WsMessage, Utf8Bytes, WebSocket};
 use rosz_access::{Registry, Session, TopicInfo};
 use rosz_decode::msg::BaseType;
 use serde_json::{Value as Json, json};
-use tokio::sync::{broadcast, mpsc, watch};
+use tokio::sync::{broadcast, watch};
 use tokio::task::JoinHandle;
+
+use crate::outbox::{Outbox, Outgoing};
 
 pub const SUBPROTOCOL: &str = "foxglove.websocket.v1";
 /// 话题发现的刷新间隔: 按此轮询 liveliness 汇总, 与上次比出上下线增量
 const DISCOVERY_INTERVAL: Duration = Duration::from_secs(1);
-/// 每连接待发数据帧上限; 满了丢新到的 (分通道背压见 14 号票)
-const SEND_QUEUE: usize = 64;
 const MESSAGE_DATA_OPCODE: u8 = 0x01;
 /// ros2msg 多定义拼接的分隔行 (同 ros2 bag / foxglove)
 const SCHEMA_SEPARATOR: &str = "================================================================================";
@@ -39,6 +40,7 @@ enum CatalogEvent {
 struct Channel {
     id: u32,
     topic: String,
+    type_name: String,
     json: Json,
 }
 
@@ -101,7 +103,7 @@ impl Hub {
             let id = catalog.next_id;
             let json = channel_json(id, topic, registry);
             added.push(json.clone());
-            catalog.channels.insert(key, Channel { id, topic: topic.name.clone(), json });
+            catalog.channels.insert(key, Channel { id, topic: topic.name.clone(), type_name: topic.type_name.clone(), json });
         }
         if !removed.is_empty() {
             let _ = self.events.send(CatalogEvent::Unadvertise(text(&json!({"op": "unadvertise", "channelIds": removed}))));
@@ -129,15 +131,15 @@ impl Hub {
             "supportedEncodings": [],
             "metadata": {"startTime": rosz_now_ns().to_string()},
         });
-        let mut connection = Connection { hub: self.clone(), subscriptions: HashMap::new() };
-        let (data_tx, mut data_rx) = mpsc::channel::<Vec<u8>>(SEND_QUEUE);
+        let outbox = Arc::new(Outbox::default());
+        let mut connection = Connection { hub: self.clone(), outbox: outbox.clone(), subscriptions: HashMap::new() };
         let mut ok = socket.send(WsMessage::Text(text(&info))).await.is_ok()
             && socket.send(WsMessage::Text(text(&hello))).await.is_ok();
         while ok {
             ok = tokio::select! {
                 incoming = socket.recv() => match incoming {
                     Some(Ok(WsMessage::Text(body))) => {
-                        let reply = connection.handle(&body, &data_tx).await;
+                        let reply = connection.handle(&body).await;
                         match reply {
                             Some(status) => socket.send(WsMessage::Text(text(&status))).await.is_ok(),
                             None => true,
@@ -153,7 +155,14 @@ impl Hub {
                     // 落后太多丢了增量: 断开, 前端重连后拿全量
                     Err(_) => false,
                 },
-                Some(frame) = data_rx.recv() => socket.send(WsMessage::Binary(frame.into())).await.is_ok(),
+                outgoing = outbox.next() => match outgoing {
+                    Outgoing::Dropped(status) => socket.send(WsMessage::Text(text(&status))).await.is_ok(),
+                    Outgoing::Frame(frame) => {
+                        let ok = socket.send(WsMessage::Binary(frame.into())).await.is_ok();
+                        outbox.sent();
+                        ok
+                    }
+                },
             };
         }
         drop(connection);
@@ -161,9 +170,10 @@ impl Hub {
     }
 }
 
-/// 一个连接上的订阅: 订阅号 -> 转发任务 (任务持有 rosz 订阅, 取消即退订)
+/// 一个连接上的订阅: 订阅号 -> 转发任务 (任务持有 rosz 订阅, 取消即退订), 各订阅的发送队列在 `outbox`
 struct Connection {
     hub: Arc<Hub>,
+    outbox: Arc<Outbox>,
     subscriptions: HashMap<u32, JoinHandle<()>>,
 }
 
@@ -177,14 +187,14 @@ impl Drop for Connection {
 
 impl Connection {
     /// 处理一条客户端控制帧; 需要告知客户端时返回 status 帧.
-    async fn handle(&mut self, body: &str, data_tx: &mpsc::Sender<Vec<u8>>) -> Option<Json> {
+    async fn handle(&mut self, body: &str) -> Option<Json> {
         let request: Json = serde_json::from_str(body).ok()?;
         match request["op"].as_str()? {
             "subscribe" => {
                 let mut failures = Vec::new();
                 for item in request["subscriptions"].as_array()? {
                     let (Some(id), Some(channel)) = (as_u32(&item["id"]), as_u32(&item["channelId"])) else { continue };
-                    if let Err(message) = self.subscribe(id, channel, data_tx.clone()).await {
+                    if let Err(message) = self.subscribe(id, channel).await {
                         failures.push(message);
                     }
                 }
@@ -195,6 +205,7 @@ impl Connection {
                     if let Some(task) = self.subscriptions.remove(&id) {
                         task.abort();
                     }
+                    self.outbox.close(id);
                 }
                 None
             }
@@ -202,13 +213,18 @@ impl Connection {
         }
     }
 
-    async fn subscribe(&mut self, id: u32, channel: u32, data_tx: mpsc::Sender<Vec<u8>>) -> Result<(), String> {
-        let topic = {
+    async fn subscribe(&mut self, id: u32, channel: u32) -> Result<(), String> {
+        let (topic, type_name) = {
             let catalog = self.hub.catalog.lock().unwrap();
-            catalog.channels.values().find(|c| c.id == channel).map(|c| c.topic.clone())
+            catalog.channels.values().find(|c| c.id == channel).map(|c| (c.topic.clone(), c.type_name.clone()))
         }
         .ok_or_else(|| format!("没有通道 {channel}"))?;
         let mut subscription = self.hub.session.subscribe(&[&topic]).await.map_err(|e| e.to_string())?;
+        if let Some(previous) = self.subscriptions.remove(&id) {
+            previous.abort();
+        }
+        self.outbox.open(id, &topic, &type_name);
+        let outbox = self.outbox.clone();
         let task = tokio::spawn(async move {
             while let Some(message) = subscription.recv().await {
                 let mut frame = Vec::with_capacity(13 + message.payload.len());
@@ -216,14 +232,10 @@ impl Connection {
                 frame.extend_from_slice(&id.to_le_bytes());
                 frame.extend_from_slice(&(message.receive_time_ns as u64).to_le_bytes());
                 frame.extend_from_slice(&message.payload);
-                if let Err(mpsc::error::TrySendError::Closed(_)) = data_tx.try_send(frame) {
-                    break;
-                }
+                outbox.push(id, message.receive_time_ns, frame);
             }
         });
-        if let Some(previous) = self.subscriptions.insert(id, task) {
-            previous.abort();
-        }
+        self.subscriptions.insert(id, task);
         Ok(())
     }
 }

@@ -9,6 +9,7 @@
  *   空间话题解出的变换与点写进 3D 面板的数据 (scene.ts), 状态里只记样本 (点云不带点)
  */
 import { type ChannelInfo, createDataSourceState, type DataSource, loadRosz, type Rosz, type Sample } from '@erban-robotics/rosz-ui'
+import { createDropTally, type DropTally } from './drops'
 import { COMPRESSED_IMAGE, type Converted, fromCompressed, fromRaw, isImageType, roleOf } from './images'
 import { fromPointCloud2, type PointCloud2 } from './pointcloud'
 import { createScene, type Scene, spatialTypeOf, TF_MESSAGE } from './scene'
@@ -32,7 +33,7 @@ type AdvertisedChannel = {
 
 export type ConnectionStatus = 'connecting' | 'open' | 'closed'
 
-export type Viewer = { dataSource: DataSource; scene: Scene }
+export type Viewer = { dataSource: DataSource; scene: Scene; drops: DropTally }
 
 /**
  * 通道目录的一项: id 用话题名 (同名话题换类型时后端给新通道号, 目录里覆盖同一项). `role` 为首帧定的图像角色,
@@ -79,6 +80,7 @@ export function connect(onReady: (viewer: Viewer) => void, onStatus: (status: Co
 
   const state = createDataSourceState({ mode: 'live' })
   const scene = createScene()
+  const drops = createDropTally()
   const channels = new Map<number, AdvertisedChannel>()
   const channelByTopic = new Map<string, number>()
   // 订阅号 -> 通道号; 通道号 -> 订阅号
@@ -128,7 +130,7 @@ export function connect(onReady: (viewer: Viewer) => void, onStatus: (status: Co
     switch (message.op) {
       case 'serverInfo': {
         const metadata = (message.metadata ?? {}) as { startTime?: string }
-        onReady({ dataSource: { state, zero: BigInt(metadata.startTime ?? '0') }, scene })
+        onReady({ dataSource: { state, zero: BigInt(metadata.startTime ?? '0') }, scene, drops })
         break
       }
       case 'advertise': {
@@ -165,9 +167,16 @@ export function connect(onReady: (viewer: Viewer) => void, onStatus: (status: Co
         state.removeChannels(removed)
         break
       }
-      case 'status':
-        console.warn(`后端: ${message.message as string}`)
+      case 'status': {
+        // 后端发送队列丢了某路的帧: 记不连续 (按时间累积的结果从播放头重建) 并累计条数
+        const channelId = subscriptionChannel.get(message.subscriptionId as number)
+        const channel = channelId === undefined ? undefined : channels.get(channelId)
+        if (typeof message.dropped === 'number' && channel) {
+          state.markDiscontinuity()
+          drops.add(channel.topic, message.dropped)
+        } else console.warn(`后端: ${message.message as string}`)
         break
+      }
     }
   }
 

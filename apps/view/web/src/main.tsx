@@ -2,15 +2,18 @@
  * rosz 查看器: 左侧常驻话题树 (按命名空间折叠), 右侧面板区 (rosz-ui 视图组装, 实时模式) 与其下的曲线区.
  * 点话题树里的图像话题即加进 (再点即移出) 图像面板, 多路并排; TF 与点云话题加进 3D 面板 (面板区右侧, 有选中的才显示);
  * 点其余话题加进消息树面板, 能解的另在曲线区列出数值字段.
- * 面板要看哪些话题, 适配器就订阅哪些 (见 layout.ts, adapter.ts).
+ * 面板要看哪些话题, 适配器就订阅哪些 (见 layout.ts, adapter.ts). Ctrl+K 按名或类型搜话题 (见 search.tsx).
+ * 面板排布与曲线所选字段本机记住. 后端发送队列丢了小消息时顶上提示累计条数 (见 drops.ts).
  */
 import { lazy, StrictMode, Suspense, useEffect, useMemo, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { ChannelList, HintProvider, type Playback, useCatalog, useLivePlayback, ViewComposition } from '@erban-robotics/rosz-ui'
+import { type ChannelInfo, ChannelList, HintProvider, type Playback, useCatalog, useLivePlayback, ViewComposition } from '@erban-robotics/rosz-ui'
 import { connect, type ConnectionStatus, type Viewer } from './adapter'
 import { Curves } from './curves'
-import { DEFAULT_LAYOUT, LAYOUT_SCOPE, pickDefaultImages, toggleTopic, useBoundTopics } from './layout'
+import { useDrops } from './drops'
+import { DEFAULT_LAYOUT, LAYOUT_SCOPE, pickDefaultImages, toggleTopic, useBoundTopics, useLayoutEpoch } from './layout'
 import { toggleSceneTopic, useSceneTopics } from './scene'
+import { TopicSearch } from './search'
 import './style.css'
 
 const STATUS_TEXT: Record<ConnectionStatus, string> = {
@@ -23,8 +26,25 @@ const PICK_DELAY_MS = 1000
 // 3D 面板 (three) 单独一块, 选了空间话题才加载
 const ScenePanel = lazy(() => import('./scene3d'))
 
+// 丢帧提示里最多列几路
+const DROP_TOPICS_SHOWN = 3
+
+function DropNotice({ viewer }: { viewer: Viewer }) {
+  const drops = useDrops(viewer.drops)
+  if (drops.size === 0) return null
+  const entries = [...drops].sort((first, second) => second[1] - first[1])
+  const listed = entries.slice(0, DROP_TOPICS_SHOWN).map(([topic, count]) => `${topic} ${count} 条`)
+  if (entries.length > DROP_TOPICS_SHOWN) listed.push(`另 ${entries.length - DROP_TOPICS_SHOWN} 路`)
+  return (
+    <p className="bg-surface-2 px-2 py-1 text-xs text-status-warning">
+      前端处理不过来, 后端已丢 (累计): {listed.join(', ')}
+    </p>
+  )
+}
+
 function Workspace({ viewer }: { viewer: Viewer }) {
   const { dataSource, scene } = viewer
+  const epoch = useLayoutEpoch()
   const playback: Playback = useLivePlayback(dataSource)
   const catalog = useCatalog(dataSource.state)
   const bound = useBoundTopics()
@@ -40,32 +60,44 @@ function Workspace({ viewer }: { viewer: Viewer }) {
     () => catalog.filter((channel) => channel.kind === 'message' && !channel.undecodable && bound.messages.includes(channel.name)),
     [catalog, bound.messages],
   )
+  // 点话题树与 Ctrl+K 选中同一处理
+  const pick = (channel: ChannelInfo) => (channel.kind === 'spatial' ? toggleSceneTopic(channel, sceneTopics) : toggleTopic(channel))
   return (
-    <div className="flex min-h-0 flex-1 gap-2 p-2">
-      <div className="flex w-80 shrink-0 flex-col gap-1">
-        <p className="text-xs text-muted-foreground">点话题加进面板, 再点移出</p>
-        <ChannelList state={dataSource.state} selected={selected} onSelect={(channel) => (channel.kind === 'spatial' ? toggleSceneTopic(channel, sceneTopics) : toggleTopic(channel))} className="min-h-0 flex-1 overflow-auto" />
-      </div>
-      <div className="flex min-w-0 flex-1 flex-col gap-2">
-        <div className="flex min-h-0 flex-[3] gap-2">
-          <div className="min-w-0 flex-[3]">
-            <ViewComposition dataSource={dataSource} playback={playback} scope={LAYOUT_SCOPE} layout={DEFAULT_LAYOUT} />
+    <>
+      <DropNotice viewer={viewer} />
+      <TopicSearch catalog={catalog} selected={selected} onPick={pick} />
+      <div className="flex min-h-0 flex-1 gap-2 p-2">
+        <div className="flex w-80 shrink-0 flex-col gap-1">
+          <p className="text-xs text-muted-foreground">点话题加进面板, 再点移出 · Ctrl+K 搜索</p>
+          <ChannelList state={dataSource.state} selected={selected} onSelect={pick} className="min-h-0 flex-1 overflow-auto" />
+        </div>
+        <div className="flex min-w-0 flex-1 flex-col gap-2">
+          <div className="flex min-h-0 flex-[3] gap-2">
+            <div className="min-w-0 flex-[3]">
+              <ViewComposition
+                key={epoch}
+                dataSource={dataSource}
+                playback={playback}
+                scope={LAYOUT_SCOPE}
+                layout={DEFAULT_LAYOUT}
+              />
+            </div>
+            {sceneTopics.length > 0 && (
+              <div className="min-w-0 flex-[2]">
+                <Suspense fallback={<p className="text-xs text-muted-foreground">加载 3D 面板</p>}>
+                  <ScenePanel dataSource={dataSource} scene={scene} topics={sceneTopics} catalog={catalog} />
+                </Suspense>
+              </div>
+            )}
           </div>
-          {sceneTopics.length > 0 && (
-            <div className="min-w-0 flex-[2]">
-              <Suspense fallback={<p className="text-xs text-muted-foreground">加载 3D 面板</p>}>
-                <ScenePanel dataSource={dataSource} scene={scene} topics={sceneTopics} catalog={catalog} />
-              </Suspense>
+          {plotted.length > 0 && (
+            <div className="min-h-0 flex-[2] overflow-auto">
+              <Curves dataSource={dataSource} channels={plotted} />
             </div>
           )}
         </div>
-        {plotted.length > 0 && (
-          <div className="min-h-0 flex-[2] overflow-auto">
-            <Curves dataSource={dataSource} channels={plotted} />
-          </div>
-        )}
       </div>
-    </div>
+    </>
   )
 }
 
