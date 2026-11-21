@@ -11,6 +11,8 @@ export default defineConfig({
   build: {
     lib: { entry: 'src/index.ts', formats: ['es'], fileName: 'index' },
     sourcemap: true,
+    // 不压缩: 应用打包时再压, 出问题时栈与源码对得上
+    minify: false,
     emptyOutDir: false,
     rolldownOptions: {
       external: (id) => external.some((name) => id === name || id.startsWith(`${name}/`)),
