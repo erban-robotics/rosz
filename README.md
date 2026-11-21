@@ -73,6 +73,27 @@ export default defineConfig({
 
 本地源码下的 `rosz-ui.css` 同样带 `@source "./"`, Tailwind 扫的是源码目录. 源码目录不必 `npm install`, 本包依赖由应用里装的发版包带进; 源码新加依赖时应用要先另装上.
 
+## 主题
+
+组件只引用颜色等设计 token (CSS 变量, 经 Tailwind v4 的 `@theme` 成为工具类), 不写死色值; 外观由使用方提供的 token 决定.
+
+- `rosz-ui.css`: 组件样式, 必须引入. 内含 `@source`, 使用方的 Tailwind 会扫描本包的类名
+- `theme.css`: 默认主题, 可选. 暗色, 取自 ADP 视觉系统, 定义组件用到的全部 token: 底色与层级 (`surface-*` `background` `gutter`), 文字 (`foreground-*` `muted-foreground`), 线 (`line` `line-strong`), 状态色 (`status-*`), 主色 (`primary*`), 曲线类别色 (`series-1` 到 `series-8`), 圆角, 字体, 小字字号与字重 (`--text-xs` `--text-sm` `--small-text-weight`)
+
+使用方按自身情况三选一:
+
+| 情况 | 做法 | 例 |
+|---|---|---|
+| 已定义同一套 token | 只引 `rosz-ui.css` | ADP |
+| 没有自己的视觉系统 | 引 `theme.css` + `rosz-ui.css` | rosz 查看器 |
+| 有自己的配色 | 只引 `rosz-ui.css`, 在自己的样式里把上述 token 映射到本站配色 | erban-caring webapp |
+
+自行映射时注意:
+
+- 曲线类别色 `series-*` 建议照搬默认主题: 这组颜色做过色觉缺陷区分度校验, 自定义时要重新校验
+- 小字字重经 `--small-text-weight` 给 12/13px 小字加重一档, 不映射则面板小字比 ADP 略细
+- 漏映射的 token 不报错, 对应元素会失去颜色; 换配色后对照 playground 逐个面板看一遍
+
 ## 数据源接口
 
 ```ts
