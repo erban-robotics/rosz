@@ -80,12 +80,18 @@ export {
   isSpatialKind,
   type Keypoints3dSample,
   parseSpatialContent,
+  type PackedPointCloudSample,
   type PointCloudSample,
   type PoseSample,
   SPATIAL_LAYER_KINDS,
   type SpatialKind,
   type SpatialLayer,
+  type TransformEdge,
+  type TransformsSample,
 } from './scene3d/spatial-layers'
+export { POINT_CLOUD2, rosSpatialKind, TF_MESSAGE } from './scene3d/ros-spatial'
+export { spatialKindOf } from './scene3d/scene-layers'
+export { Scene3dView } from './scene3d/Scene3dView'
 export { TimelinePanel } from './timeline/TimelinePanel'
 export {
   type EventCategoryDefinition,

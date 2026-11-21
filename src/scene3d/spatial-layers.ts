@@ -1,6 +1,8 @@
 /**
  * 3D场景的空间图层: 坐标变换 (TF), 位姿, 点云, 3D关键点. 空间通道 (`kind: 'spatial'`, `type`为下列种类) 的样本内容为各种类的一条
  * (`PoseSample` `PointCloudSample` `Keypoints3dSample`, 时刻为会话时间轴秒数); 场景按播放时刻取当时或之前最近的一条, 第一条之前不画.
+ * 另有两种通用形状 (`TransformsSample`: 一条含多个坐标变换; `PackedPointCloudSample`: 点为Float32Array), 以及`type`为ROS类型
+ * (`tf2_msgs/msg/TFMessage` `sensor_msgs/msg/PointCloud2`) 的原始CDR, 见`scene-layers.ts`.
  *
  * 离线数据的JSON内容形状 (逐条带`time_s`, 相对数据原点) 也在这里约定, 适配器用`parseSpatialContent`解析, 产出方按此形状写.
  */
@@ -43,6 +45,25 @@ const Keypoints3dContentSchema = z.object({
 export type PoseSample = { time: number; position: Vector3; orientation: Quaternion }
 export type PointCloudSample = { time: number; points: Vector3[] }
 export type Keypoints3dSample = { time: number; points: { label?: string; position: Vector3 }[] }
+
+// 一个坐标变换: 子坐标系在父坐标系里的位姿
+export type TransformEdge = { parent: string; child: string; translation: Vector3; rotation: Quaternion }
+/**
+ * 一条含多个坐标变换 (如ROS的`TFMessage`). 场景对每个子坐标系取当时或之前最近的一条含它的; 不给`time`即取样本在当前时间轴上的时刻.
+ * 用这种形状的坐标变换通道不必在目录里给`frame` `childFrame`
+ */
+export type TransformsSample = { time?: number; transforms: TransformEdge[] }
+/**
+ * 打包的一帧点云: `positions`为x y z交错, `colors`为同长的线性RGB (0到1), 可不给; `frame`为点所在坐标系, 不给取通道的`frame`;
+ * `total`为抽取前的点数 (点太多时产出方等间隔抽取), 不给即没抽. 不给`time`即取样本在当前时间轴上的时刻
+ */
+export type PackedPointCloudSample = {
+  time?: number
+  frame?: string
+  positions: Float32Array
+  colors?: Float32Array | null
+  total?: number
+}
 
 // `frame`为数据所在的坐标系 (坐标变换取父坐标系), 场景只画与基座标系相符的
 type SpatialCommon = { channel: string; name: string; frame: string }
