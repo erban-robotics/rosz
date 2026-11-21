@@ -41,7 +41,11 @@ rosz view --router tcp/192.168.1.10:7447    # 或 export ROSZ_ROUTER 后直接 r
 
 本机起 HTTP + WebSocket 服务 (只听 127.0.0.1, 默认端口 7450, 被占用时随机; `--port` 指定), 以 Chromium 系浏览器的 `--app` 独立窗口打开: 按 xdg 默认浏览器, 再扫 PATH 找 Chrome / Chromium / Edge / Brave / Vivaldi / Deepin 浏览器, 浏览器配置用独立目录 `~/.local/share/rosz/browser-profile`; 都没有则在默认浏览器开标签页. 关窗即退出 (浏览器子进程退出, 或 WebSocket 全断超过 5 秒), Ctrl+C 同时关窗. `--no-open` 只打印地址不开窗口.
 
-界面: 左侧话题树 (按命名空间折叠, 已订阅的显示频率, 解不了的类型变灰, transient_local 标 "静态"), 右侧面板区 (默认一个图像面板, 显示全部 `CompressedImage` 话题, 含深度伪彩色; "添加视图" 可加别的面板). 面板要看哪些话题才订阅哪些.
+界面: 左侧话题树 (按命名空间折叠, 已订阅的显示频率, 解不了的类型变灰, transient_local 标 "静态"), 右侧面板区 (图像面板与消息树面板, 可拖动调整, "添加视图" 可加别的面板) 与其下的曲线区. 面板要看哪些话题才订阅哪些:
+
+- 点话题树里的话题即加进面板, 再点移出. 图像话题进图像面板, 多路并排; 其余进消息树面板, 能解的另在曲线区列出数值字段, 点字段画最近 10 秒的曲线. 加了哪些存在浏览器本地, 下次打开仍在; 首次打开自动挑一路彩色, 一路深度
+- 图像: `CompressedImage` 的 JPEG / PNG 彩色, `16UC1; zstd` 与 `16UC1; compressedDepth` 深度 (伪彩色, 悬停显示该点毫米值); 原始 `Image` 的 `rgb8` `bgr8` `rgba8` `bgra8` `mono8` 彩色与 `16UC1` `mono16` `32FC1` 深度. 不支持的格式 (如 zstd_image_transport 的 `zstd`) 与空数据整路变灰, 面板上写明原因
+- 无定义的类型变灰, 消息树里只显示名称, 类型与原因
 
 后端与前端之间为 `foxglove.websocket.v1` 的子集 (见 `apps/view/src/protocol.rs`): 后端只转原始 CDR 不解码, 数据帧带后端 PC 时钟的接收时间, 前端以它为接收时刻; 解码与渲染在前端 (共享 UI 包 rosz-ui + rosz-wasm).
 
