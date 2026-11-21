@@ -367,6 +367,14 @@ function StreamGrid({ channels, overlays, isActive }: { channels: ChannelInfo[];
   const shownKey = useClockSelector(playback.clock, (time) =>
     isActive ? ids.map((id) => latestKey(state.latestAtOrBefore(id, nanosecondsAt(zero, time)))).join(',') : '',
   )
+  // 各路播放头所在的帧号 (按帧时刻表): 暂停时步进到还没取来的帧, 所显示的样本不变, 需求窗口也要随之移过去
+  const frameKey = useClockSelector(playback.clock, (time) =>
+    isActive && !isLive
+      ? channels
+          .map((channel) => (channel.frames ? latestIndexAtOrBefore(frameTimesOn(channel.frames, axis), nanosecondsAt(zero, time)) : ''))
+          .join(',')
+      : '',
+  )
 
   useEffect(() => {
     if (!isActive) {
@@ -379,7 +387,7 @@ function StreamGrid({ channels, overlays, isActive }: { channels: ChannelInfo[];
     state.setDemand(panelId, { channels: ids, range: { start: isLive ? time : demandStartOf(channels, axis, time), end } })
     // 实时只说明要看哪些通道, 不随每帧更新窗口
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state, zero, panelId, ids, channels, isActive, axis, playback.isPlaying, playback.clock, isLive ? null : shownKey])
+  }, [state, zero, panelId, ids, channels, isActive, axis, playback.isPlaying, playback.clock, isLive ? null : shownKey, frameKey])
   useEffect(() => () => state.setDemand(panelId, null), [state, panelId])
 
   const time = isLive ? (state.latestReceiveTime() ?? 0n) : nanosecondsAt(zero, playback.clock.getTime())
