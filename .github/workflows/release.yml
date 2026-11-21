@@ -102,7 +102,18 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-zigbuild
+      # 查看器 (`rosz view`) 的前端由 rust-embed 把 apps/view/web/dist 编进二进制: 须先构建, 否则页面为空
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: 构建查看器前端
+        working-directory: apps/view/web
+        run: npm ci && npm run build
       - run: cargo zigbuild --release --locked --target ${{ matrix.target }} -p rosz-cli
+      - name: 确认前端已嵌入
+        run: |
+          asset=$(cd apps/view/web/dist/assets && ls index-*.js | head -1)
+          grep -q "$asset" target/${{ matrix.target }}/release/rosz || { echo "二进制里没有前端 ($asset)"; exit 1; }
       - run: |
           mkdir -p dist
           arch=${{ matrix.target }}; arch=${arch%%-*}
@@ -128,5 +139,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --notes-file - <<NOTES
-          安装方式见 README. Python: \`pip install rosz --find-links https://github.com/${GITHUB_REPOSITORY}/releases/expanded_assets/${GITHUB_REF_NAME}\`
+          安装方式见 README. CLI 与查看器: \`rosz-*-linux-<架构>\` 为 musl 静态单文件, 查看器前端已嵌入, \`chmod +x\` 后 \`rosz view --router <地址>\` 即开. Python: \`pip install rosz --find-links https://github.com/${GITHUB_REPOSITORY}/releases/expanded_assets/${GITHUB_REF_NAME}\`
           NOTES

@@ -6,12 +6,12 @@
 
 ## 安装
 
-产物都挂在 [GitHub Release](https://github.com/erban-robotics/rosz/releases), 不发公共平台. 以 `v0.1.0` 为例:
+产物都挂在 [GitHub Release](https://github.com/erban-robotics/rosz/releases), 不发公共平台. 以 `v0.2.0` 为例:
 
-- Python (x86_64 / aarch64, Python 3.10+): `pip install rosz --find-links https://github.com/erban-robotics/rosz/releases/expanded_assets/v0.1.0`
-- CLI: 下载 `rosz-0.1.0-linux-x86_64` (或 `-aarch64`), musl 静态二进制, `chmod +x` 即用
-- npm (浏览器解码): `"@erban-robotics/rosz-wasm": "https://github.com/erban-robotics/rosz/releases/download/v0.1.0/erban-robotics-rosz-wasm-0.1.0.tgz"`. npm 12 起默认 `allow-remote=none`, 拒装远程 tgz, 需在项目 `.npmrc` 写 `allow-remote=all` (或安装时加 `--allow-remote=all`)
-- Rust: `rosz-access = { git = "https://github.com/erban-robotics/rosz", tag = "v0.1.0" }` (只解码用 `rosz-decode`)
+- Python (x86_64 / aarch64, Python 3.10+): `pip install rosz --find-links https://github.com/erban-robotics/rosz/releases/expanded_assets/v0.2.0`
+- CLI 与查看器: 下载 `rosz-0.2.0-linux-x86_64` (或 `-aarch64`), musl 静态单文件, 查看器前端已嵌入, `chmod +x` 即用 (`rosz view` 即查看器)
+- npm (浏览器解码): `"@erban-robotics/rosz-wasm": "https://github.com/erban-robotics/rosz/releases/download/v0.2.0/erban-robotics-rosz-wasm-0.2.0.tgz"`. npm 12 起默认 `allow-remote=none`, 拒装远程 tgz, 需在项目 `.npmrc` 写 `allow-remote=all` (或安装时加 `--allow-remote=all`)
+- Rust: `rosz-access = { git = "https://github.com/erban-robotics/rosz", tag = "v0.2.0" }` (只解码用 `rosz-decode`)
 
 ## router 地址
 
@@ -32,6 +32,26 @@ rosz stats /joint_states --seconds 3
 `snapshot` 落文件: 彩色为 JPEG (压缩图原样, 原始图编码), 深度为 16 位 PNG (毫米) 加伪彩色预览 PNG, 其他消息为 JSON; 清单 (`manifest.json`, 同时打印) 含每个文件路径, 接收时间, 采样时间及二者相对快照时刻的偏差 (毫秒).
 
 `--msg-dir <目录>` 可追加 `.msg` (目录内为 `<包>/msg/<类型>.msg`).
+
+## 查看器
+
+```bash
+rosz view --router tcp/192.168.1.10:7447    # 或 export ROSZ_ROUTER 后直接 rosz view
+```
+
+本机起 HTTP + WebSocket 服务 (只听 127.0.0.1, 默认端口 7450, 被占用时随机; `--port` 指定), 以 Chromium 系浏览器的 `--app` 独立窗口打开: 按 xdg 默认浏览器, 再扫 PATH 找 Chrome / Chromium / Edge / Brave / Vivaldi / Deepin 浏览器, 浏览器配置用独立目录 `~/.local/share/rosz/browser-profile`; 都没有则在默认浏览器开标签页. 关窗即退出 (浏览器子进程退出, 或 WebSocket 全断超过 5 秒), Ctrl+C 同时关窗. `--no-open` 只打印地址不开窗口.
+
+界面: 左侧话题树 (按命名空间折叠, 已订阅的显示频率, 解不了的类型变灰, transient_local 标 "静态"), 右侧面板区 (图像面板与消息树面板, 可拖动调整, "添加视图" 可加别的面板), 其右的 3D 面板与其下的曲线区. 面板要看哪些话题才订阅哪些:
+
+- 点话题树里的话题 (或 Ctrl+K 按话题名与类型搜索, 空格分开多个词, 回车) 即加进面板, 再点移出. 图像话题进图像面板, 多路并排; 其余进消息树面板, 能解的另在曲线区列出数值字段, 点字段画最近 10 秒的曲线. 加了哪些, 面板的拖动排布与曲线所选字段都存在浏览器本地 (固定端口 7450 同源才保留), 下次打开仍在; 首次打开自动挑一路彩色, 一路深度. 关掉了图像或消息树面板后再点话题, 面板在右侧重新打开; "恢复默认布局" 只复位排布, 不清已加的话题
+- 图像: `CompressedImage` 的 JPEG / PNG 彩色, `16UC1; zstd` 与 `16UC1; compressedDepth` 深度 (伪彩色, 悬停显示该点毫米值); 原始 `Image` 的 `rgb8` `bgr8` `rgba8` `bgra8` `mono8` 彩色与 `16UC1` `mono16` `32FC1` 深度. 不支持的格式 (如 zstd_image_transport 的 `zstd`) 与空数据整路变灰, 面板上写明原因
+- 无定义的类型变灰, 消息树里只显示名称, 类型与原因
+- 3D: `TFMessage` (`/tf` `/tf_static` 等) 与 `PointCloud2` 话题点进 3D 面板 (没选过时默认全部 TF 话题). 坐标系画成坐标轴, 名字与指向父坐标系的连线; 点云经 TF 换算后画点 (有 `rgb` 字段时带色, 超过 20 万点等间隔抽取). 一切换算到 "固定坐标系" (默认最大那棵 TF 树的根, 可选); TF 取各边最新的一条, 不按点云时间戳插值. 只要 3D 面板开着就订阅全部 TF 话题 (点云换算要用). 不显示机器人模型
+- transient_local 话题 (如 `/tf_static`) 订阅时先取各发布端缓存的历史 (rmw_zenoh 的 AdvancedPublisher 缓存, 深度为发布端 QoS 的 history depth), 所以晚于发布打开查看器也看得到; 同一话题的发布端 durability 不一时, 有一个 transient_local 即按 transient_local 订阅. 从未发布过的 transient_local 话题 (如没有过目标的 action `_action/status`) 自然取不到
+
+后端与前端之间为 `foxglove.websocket.v1` 的子集 (见 `apps/view/src/protocol.rs`): 后端只转原始 CDR 不解码, 数据帧带后端 PC 时钟的接收时间, 前端以它为接收时刻; 解码与渲染在前端 (共享 UI 包 rosz-ui + rosz-wasm).
+
+背压 (前端处理不过来时, 见 `apps/view/src/outbox.rs`): 每个订阅一个发送队列. `CompressedImage` `Image` `PointCloud2` `CompressedVideo` 每路只留最新一条, 连接待发字节低于 4 MB 才入队 (降帧, 不通知); 其余话题各留约 1 秒, 满了丢最旧的并发 "已丢 N 条" (`status` 帧附 `subscriptionId` 与 `dropped`), 前端记一次不连续并在顶上提示累计条数. 先发小消息再发大消息, 图像不挡在小消息前面.
 
 ## Python
 
@@ -79,6 +99,7 @@ if let Some(msg) = session.latest("/joint_states", std::time::Duration::from_sec
 | `crates/decode` | `rosz-decode`: `.msg` 注册表, XCDR1 解码, RIHS01, 媒体解码 (JPEG 在 `jpeg` 开关后) |
 | `crates/access` | `rosz-access`: rmw_zenoh 话题发现与订阅 |
 | `apps/cli` | `rosz` 命令行 |
+| `apps/view` | `rosz-view`: 查看器后端 (`rosz view`); `web/` 为前端 (Vite + React + rosz-ui), 构建产物编进二进制 |
 | `bindings/python` | PyO3 wheel |
 | `bindings/wasm` | wasm-bindgen 模块与 npm 包 |
 | `messages` | 内置 `.msg` 与解码金样本, 见 [messages/README.md](messages/README.md) |
@@ -104,6 +125,15 @@ docker rm -f rosz-jazzy
 
 换内置 `.msg` 后用 `scripts/jazzy/golden.sh` 重新生成金样本.
 
+查看器前端须先构建, 产物 (`apps/view/web/dist`) 在编译 `rosz` 时编进二进制; 未构建时页面只提示先构建. 查看器协议不写自动化测试, 靠手动验收 (可用上面的 jazzy 容器发布):
+
+```bash
+(cd apps/view/web && npm install && npm run build) && cargo build --release -p rosz-cli
+target/release/rosz view --router tcp/127.0.0.1:7447
+# 3D 面板: 容器里另起 scripts/jazzy/publish_3d.py (static_transform_publisher, 动态 /tf, 两路点云; 用法见其开头), 过一会儿再开查看器
+# 改前端时: 一边 rosz view --no-open 起后端, 一边在 apps/view/web 里 npm run dev (WebSocket 经代理转到 7450)
+```
+
 ## 发版
 
-整个 workspace 统一版本号 (`Cargo.toml` 的 `workspace.package.version`, Python 与 npm 包同此). 合进 main 后手动推 `vX.Y.Z` tag, GitHub 托管 runner (`.github/workflows/release.yml`) 构建 wheel (两架构), WASM tgz, CLI 二进制并挂到 Release.
+整个 workspace 统一版本号 (`Cargo.toml` 的 `workspace.package.version`, Python 与 npm 包同此). 合进 main 后手动推 `vX.Y.Z` tag, GitHub 托管 runner (`.github/workflows/release.yml`) 构建 wheel (两架构), WASM tgz, CLI 二进制并挂到 Release. CLI 二进制构建前先 `npm ci && npm run build` 查看器前端, 构建后检查前端已嵌入, 所以 Release 上的 `rosz` 即带界面的查看器单文件.
