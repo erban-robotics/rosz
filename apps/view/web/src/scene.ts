@@ -66,7 +66,7 @@ export function createScene() {
       clouds.set(topic, { ...cloud, frame: frameName(cloud.frame) })
       changed()
     },
-    /** 话题下线: 去掉它的点云与它给的边 */
+    /** 话题退订或下线: 去掉它的点云与它给的边 */
     removeTopic(topic: string) {
       let removed = clouds.delete(topic)
       for (const [child, edge] of edges)

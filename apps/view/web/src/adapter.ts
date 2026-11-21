@@ -6,7 +6,7 @@
  * - 订阅: 跟着状态的需求窗口走, 窗口里出现的通道才订阅, 不再出现即退订; 解不了的不订阅
  * - 样本: 接收时刻取数据帧里后端 PC 时钟的接收时间 (不用浏览器时钟), 采样时刻由 rosz-wasm 解 Header; 图像换成面板吃的
  *   `format` + 压缩字节 (见 images.ts). 面板显示不了的图像 (不认识的格式, 空数据) 整路标为解不了并退订, 原因显示在话题树与面板上.
- *   空间话题解出的变换与点写进 3D 面板的数据 (scene.ts), 状态里只记样本 (点云不带点)
+ *   空间话题解出的变换与点写进 3D 面板的数据 (scene.ts), 状态里只记样本 (点云不带点); 退订或下线时从中去掉
  */
 import { type ChannelInfo, createDataSourceState, type DataSource, loadRosz, type Rosz, type Sample } from '@erban-robotics/rosz-ui'
 import { createDropTally, type DropTally } from './drops'
@@ -119,6 +119,9 @@ export function connect(onReady: (viewer: Viewer) => void, onStatus: (status: Co
     const unsubscribe = [...channelSubscription].filter(([channelId]) => !wanted.has(channelId)).map(([channelId, id]) => {
       channelSubscription.delete(channelId)
       subscriptionChannel.delete(id)
+      // 退订的空间话题 (含关掉 3D 面板) 不再更新, 它给的边与点云作废; 重订时重新收 (/tf_static 由历史补发)
+      const channel = channels.get(channelId)
+      if (channel && spatialTypeOf(channel.schemaName)) scene.removeTopic(channel.topic)
       return id
     })
     if (subscribe.length > 0) send({ op: 'subscribe', subscriptions: subscribe })
