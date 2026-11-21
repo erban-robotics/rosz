@@ -46,7 +46,7 @@ rosz view --router tcp/192.168.1.10:7447    # 或 export ROSZ_ROUTER 后直接 r
 - 点话题树里的话题 (或 Ctrl+K 按话题名与类型搜索, 空格分开多个词, 回车) 即加进面板, 再点移出. 图像话题进图像面板, 多路并排; 其余进消息树面板, 能解的另在曲线区列出数值字段, 点字段画最近 10 秒的曲线. 加了哪些, 面板的拖动排布与曲线所选字段都存在浏览器本地 (固定端口 7450 同源才保留), 下次打开仍在; 首次打开自动挑一路彩色, 一路深度. 关掉了图像或消息树面板后再点话题, 面板在右侧重新打开; "恢复默认布局" 只复位排布, 不清已加的话题
 - 图像: `CompressedImage` 的 JPEG / PNG 彩色, `16UC1; zstd` 与 `16UC1; compressedDepth` 深度 (伪彩色, 悬停显示该点毫米值); 原始 `Image` 的 `rgb8` `bgr8` `rgba8` `bgra8` `mono8` 彩色与 `16UC1` `mono16` `32FC1` 深度. 不支持的格式 (如 zstd_image_transport 的 `zstd`) 与空数据整路变灰, 面板上写明原因
 - 无定义的类型变灰, 消息树里只显示名称, 类型与原因
-- 3D: `TFMessage` (`/tf` `/tf_static` 等) 与 `PointCloud2` 话题点进 3D 面板 (没选过时默认全部 TF 话题). 坐标系画成坐标轴, 名字与指向父坐标系的连线; 点云经 TF 换算后画点 (有 `rgb` 字段时带色, 超过 20 万点等间隔抽取). 一切换算到 "固定坐标系" (默认最大那棵 TF 树的根, 可选); TF 取各边最新的一条, 不按点云时间戳插值. 只要 3D 面板开着就订阅全部 TF 话题 (点云换算要用). 不显示机器人模型
+- 3D: `TFMessage` (`/tf` `/tf_static` 等) 与 `PointCloud2` 话题点进 3D 面板 (没选过时默认全部 TF 话题). 面板为 rosz-ui 的 3D 场景 (与 ADP 回放同一套): 坐标系画成坐标轴, 名字与指向父坐标系的连线; 点云按其 frame 经 TF 树换算后画点 (有 `rgb` 字段时带色, 超过 20 万点等间隔抽取). 一切换算到 "基座标系" (默认最大那棵 TF 树的根, 可选); TF 取各边最新的一条, 不按点云时间戳插值. 只要 3D 面板开着就订阅全部 TF 话题 (点云换算要用). 视角只在打开或换了话题, 基座标系时取景一次, 数据更新不复位 ("重新取景" 可手动再取). 浏览器拿不到 WebGL 时只在 3D 面板内提示. 不显示机器人模型
 - transient_local 话题 (如 `/tf_static`) 订阅时先取各发布端缓存的历史 (rmw_zenoh 的 AdvancedPublisher 缓存, 深度为发布端 QoS 的 history depth), 所以晚于发布打开查看器也看得到; 同一话题的发布端 durability 不一时, 有一个 transient_local 即按 transient_local 订阅. 从未发布过的 transient_local 话题 (如没有过目标的 action `_action/status`) 自然取不到
 
 后端与前端之间为 `foxglove.websocket.v1` 的子集 (见 `apps/view/src/protocol.rs`): 后端只转原始 CDR 不解码, 数据帧带后端 PC 时钟的接收时间, 前端以它为接收时刻; 解码与渲染在前端 (共享 UI 包 rosz-ui + rosz-wasm).
@@ -132,6 +132,7 @@ docker rm -f rosz-jazzy
 target/release/rosz view --router tcp/127.0.0.1:7447
 # 3D 面板: 容器里另起 scripts/jazzy/publish_3d.py (static_transform_publisher, 动态 /tf, 两路点云; 用法见其开头), 过一会儿再开查看器
 # 改前端时: 一边 rosz view --no-open 起后端, 一边在 apps/view/web 里 npm run dev (WebSocket 经代理转到 7450)
+# 同时改 rosz-ui 时: ROSZ_UI_SRC=~/projects/rosz-ui/src npm run dev (或 npx vite build), vite alias 指向本机源码 (rosz-ui README "开发期指向本地源码")
 ```
 
 ## 发版
