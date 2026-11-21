@@ -33,6 +33,18 @@ rosz stats /joint_states --seconds 3
 
 `--msg-dir <目录>` 可追加 `.msg` (目录内为 `<包>/msg/<类型>.msg`).
 
+## 查看器
+
+```bash
+rosz view --router tcp/192.168.1.10:7447    # 或 export ROSZ_ROUTER 后直接 rosz view
+```
+
+本机起 HTTP + WebSocket 服务 (只听 127.0.0.1, 默认端口 7450, 被占用时随机; `--port` 指定), 以 Chromium 系浏览器的 `--app` 独立窗口打开: 按 xdg 默认浏览器, 再扫 PATH 找 Chrome / Chromium / Edge / Brave / Vivaldi / Deepin 浏览器, 浏览器配置用独立目录 `~/.local/share/rosz/browser-profile`; 都没有则在默认浏览器开标签页. 关窗即退出 (浏览器子进程退出, 或 WebSocket 全断超过 5 秒), Ctrl+C 同时关窗. `--no-open` 只打印地址不开窗口.
+
+界面: 左侧话题树 (按命名空间折叠, 已订阅的显示频率, 解不了的类型变灰, transient_local 标 "静态"), 右侧面板区 (默认一个图像面板, 显示全部 `CompressedImage` 话题, 含深度伪彩色; "添加视图" 可加别的面板). 面板要看哪些话题才订阅哪些.
+
+后端与前端之间为 `foxglove.websocket.v1` 的子集 (见 `apps/view/src/protocol.rs`): 后端只转原始 CDR 不解码, 数据帧带后端 PC 时钟的接收时间, 前端以它为接收时刻; 解码与渲染在前端 (共享 UI 包 rosz-ui + rosz-wasm).
+
 ## Python
 
 ```python
@@ -79,6 +91,7 @@ if let Some(msg) = session.latest("/joint_states", std::time::Duration::from_sec
 | `crates/decode` | `rosz-decode`: `.msg` 注册表, XCDR1 解码, RIHS01, 媒体解码 (JPEG 在 `jpeg` 开关后) |
 | `crates/access` | `rosz-access`: rmw_zenoh 话题发现与订阅 |
 | `apps/cli` | `rosz` 命令行 |
+| `apps/view` | `rosz-view`: 查看器后端 (`rosz view`); `web/` 为前端 (Vite + React + rosz-ui), 构建产物编进二进制 |
 | `bindings/python` | PyO3 wheel |
 | `bindings/wasm` | wasm-bindgen 模块与 npm 包 |
 | `messages` | 内置 `.msg` 与解码金样本, 见 [messages/README.md](messages/README.md) |
@@ -103,6 +116,14 @@ docker rm -f rosz-jazzy
 ```
 
 换内置 `.msg` 后用 `scripts/jazzy/golden.sh` 重新生成金样本.
+
+查看器前端须先构建, 产物 (`apps/view/web/dist`) 在编译 `rosz` 时编进二进制; 未构建时页面只提示先构建. 查看器协议不写自动化测试, 靠手动验收 (可用上面的 jazzy 容器发布):
+
+```bash
+(cd apps/view/web && npm install && npm run build) && cargo build --release -p rosz-cli
+target/release/rosz view --router tcp/127.0.0.1:7447
+# 改前端时: 一边 rosz view --no-open 起后端, 一边在 apps/view/web 里 npm run dev (WebSocket 经代理转到 7450)
+```
 
 ## 发版
 

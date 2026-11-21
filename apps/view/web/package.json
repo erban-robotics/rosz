@@ -1,0 +1,26 @@
+{
+  "name": "rosz-view-web",
+  "private": true,
+  "description": "rosz 查看器前端: 构建产物 (dist/) 编进 rosz 二进制",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build"
+  },
+  "dependencies": {
+    "@erban-robotics/rosz-ui": "https://github.com/erban-robotics/rosz-ui/releases/download/v0.1.0/erban-robotics-rosz-ui-0.1.0.tgz",
+    "@react-three/fiber": "^9.8.2",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "three": "^0.185.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^5.2.0",
+    "tailwindcss": "^4.3.3",
+    "typescript": "~6.0",
+    "vite": "^8.3.5"
+  }
+}

@@ -69,6 +69,15 @@ enum Command {
         #[arg(long, default_value_t = 3.0)]
         seconds: f64,
     },
+    /// 查看器: 以浏览器独立窗口打开 (话题树 + 图像面板), 关窗即退出
+    View {
+        /// 本机监听端口 (只听 127.0.0.1; 默认 7450, 被占用时随机)
+        #[arg(long)]
+        port: Option<u16>,
+        /// 不拉起浏览器, 只打印地址 (Ctrl+C 退出)
+        #[arg(long)]
+        no_open: bool,
+    },
 }
 
 /// 输出方式
@@ -145,6 +154,10 @@ async fn run(cli: Cli, output: Output) -> Result<ExitCode, Failure> {
         Command::Echo { topic, count, timeout } => echo(&session, output, &topic, count, seconds(timeout)).await,
         Command::Snapshot { topics, out, timeout } => snapshot::run(&session, output, topics, out, seconds(timeout)).await,
         Command::Stats { topics, seconds: s } => stats::run(&session, output, &topics, seconds(s)).await,
+        Command::View { port, no_open } => rosz_view::run(session, rosz_view::Options { port, open: !no_open })
+            .await
+            .map(|()| ExitCode::SUCCESS)
+            .map_err(|e| Failure::new("view", e.to_string())),
     }
 }
 
