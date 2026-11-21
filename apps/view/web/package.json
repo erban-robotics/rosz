@@ -8,7 +8,7 @@
     "build": "tsc --noEmit && vite build"
   },
   "dependencies": {
-    "@erban-robotics/rosz-ui": "https://github.com/erban-robotics/rosz-ui/releases/download/v0.1.0/erban-robotics-rosz-ui-0.1.0.tgz",
+    "@erban-robotics/rosz-ui": "https://github.com/erban-robotics/rosz-ui/releases/download/v0.3.0/erban-robotics-rosz-ui-0.3.0.tgz",
     "@react-three/drei": "^10.7.9",
     "@react-three/fiber": "^9.8.2",
     "react": "^19.3.1",
