@@ -2,7 +2,8 @@
  * 回放 capture.py 录下的真实话题: 按原节奏追加进实时模式的状态 (循环播), 用包的面板显示.
  * 查询参数: `capture` 录制目录名 (默认head); `copies` 彩色图像复制成几路 (测多路CPU, 默认1);
  * `depth` 只放哪种深度 (`zstd` 或 `png`, 默认都放); `messages=0` 不放结构化消息;
- * `mode=offline` 改按离线回放: 图像通道给帧时刻表, 按需求窗口以1秒为块写入 (同ADP适配器的做法), 有播放控件与时间轴切换
+ * `mode=offline` 改按离线回放: 图像通道给帧时刻表, 按需求窗口以1秒为块写入 (同ADP适配器的做法), 有播放控件与时间轴切换.
+ * 视频录制 (`capture=video`, 由encode-video.mjs造): 每路给关键帧, 页面上`await compareVideo(话题, 帧号)`把画面与ffmpeg解出的同帧PNG比对
  */
 import { StrictMode, useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
@@ -17,11 +18,13 @@ import {
   type Sample,
   useLivePlayback,
   usePlayback,
+  usePlaybackStore,
   ViewComposition,
 } from '../src'
 import './style.css'
 
-type Entry = { file: string; topic: string; type: string | null; format?: string }
+// `keyframes`: 视频的关键帧样本序号
+type Entry = { file: string; topic: string; type: string | null; format?: string; keyframes?: number[] }
 type Record = { receive: bigint; sample: bigint | null; data: Uint8Array }
 
 const params = new URLSearchParams(location.search)
@@ -35,7 +38,7 @@ const BLOCK_NANOSECONDS = 1_000_000_000n
 function isWanted(entry: Entry) {
   const isDepth = entry.topic.includes('depth')
   if (isDepth && depthOnly) return depthOnly === 'zstd' ? entry.format === '16UC1; zstd' : entry.topic.includes('compressedDepth')
-  return isDepth || entry.type === 'sensor_msgs/msg/CompressedImage' || withMessages
+  return isDepth || entry.keyframes !== undefined || entry.type === 'sensor_msgs/msg/CompressedImage' || withMessages
 }
 
 function parseRecords(buffer: ArrayBuffer): Record[] {
@@ -51,7 +54,7 @@ function parseRecords(buffer: ArrayBuffer): Record[] {
   return records
 }
 
-type Track = { channels: ChannelInfo[]; records: Record[]; toPayload: (record: Record) => unknown }
+type Track = { channels: ChannelInfo[]; records: Record[]; toPayload: (record: Record) => unknown; keyframes?: number[] }
 
 async function loadCapture(): Promise<Track[]> {
   const base = `/captures/${capture}/`
@@ -60,12 +63,15 @@ async function loadCapture(): Promise<Track[]> {
   return Promise.all(
     manifest.map(async (entry): Promise<Track> => {
       const records = parseRecords(await (await fetch(base + entry.file)).arrayBuffer())
-      if (entry.format)
+      if (entry.format) {
+        const keyframes = new Set(entry.keyframes?.map((index) => records[index]))
         return {
-          channels: [{ id: entry.topic, kind: 'image', name: entry.topic, type: 'sensor_msgs/msg/CompressedImage', role: 'depth' }],
+          channels: [{ id: entry.topic, kind: 'image', name: entry.topic, type: entry.type, role: entry.keyframes ? 'camera' : 'depth' }],
           records,
-          toPayload: (record) => ({ format: entry.format, data: record.data }),
+          toPayload: (record) => ({ format: entry.format, data: record.data, ...(entry.keyframes && { isKeyframe: keyframes.has(record) }) }),
+          keyframes: entry.keyframes,
         }
+      }
       if (entry.type === 'sensor_msgs/msg/CompressedImage') {
         const isDepth = entry.topic.includes('depth')
         const count = isDepth ? 1 : copies
@@ -172,7 +178,11 @@ function offlineCatalog(tracks: Track[]): ChannelInfo[] {
         ? {
             ...channel,
             range,
-            frames: { receiveTimes, sampleTimes: track.records.map((record) => record.sample ?? record.receive) },
+            frames: {
+              receiveTimes,
+              sampleTimes: track.records.map((record) => record.sample ?? record.receive),
+              keyframeIndices: track.keyframes,
+            },
           }
         : { ...channel, range },
     )
@@ -192,6 +202,27 @@ async function probeDepth(tracks: Track[]) {
       results.push({ topic, ...probe, browser: frame.data[probe.y * frame.width + probe.x] })
   }
   return results
+}
+
+// 验收: 该话题画面canvas与reference/<format>/下ffmpeg解出的第`frame`帧 (帧号从0起) 逐像素比, 返回RGB平均绝对差, 另给前后帧作参照
+async function compareVideo(topic: string, frame: number) {
+  const canvas = document.querySelector<HTMLCanvasElement>(`canvas[aria-label="${topic}"]`)!
+  const shown = canvas.getContext('2d')!.getImageData(0, 0, canvas.width, canvas.height).data
+  const format = topic.split('/').at(-1)
+  const differenceTo = async (index: number) => {
+    const response = await fetch(`/captures/${capture}/reference/${format}/${String(index + 1).padStart(4, '0')}.png`)
+    // 越界的帧号: 开发服务器回index.html
+    if (!response.headers.get('content-type')?.startsWith('image/')) return null
+    const bitmap = await createImageBitmap(await response.blob())
+    const context = new OffscreenCanvas(bitmap.width, bitmap.height).getContext('2d')!
+    context.drawImage(bitmap, 0, 0)
+    const expected = context.getImageData(0, 0, bitmap.width, bitmap.height).data
+    let total = 0
+    for (let offset = 0; offset < expected.length; offset += 4)
+      for (let channel = 0; channel < 3; channel += 1) total += Math.abs(expected[offset + channel] - shown[offset + channel])
+    return total / ((expected.length / 4) * 3)
+  }
+  return { frame: await differenceTo(frame), previous: await differenceTo(frame - 1), next: await differenceTo(frame + 1) }
 }
 
 function Live({ dataSource }: { dataSource: DataSource }) {
@@ -219,7 +250,7 @@ function App() {
           ? { state: createDataSourceState({ mode: 'offline' }), zero: origin }
           : { state: createDataSourceState({ mode: 'live' }), zero: BigInt(Date.now()) * 1_000_000n }
         next.state.setCatalog(isOffline ? offlineCatalog(tracks) : tracks.flatMap((track) => track.channels))
-        Object.assign(window, { probeDepth: () => probeDepth(tracks), roszState: next.state })
+        Object.assign(window, { probeDepth: () => probeDepth(tracks), compareVideo, roszState: next.state, playbackStore: usePlaybackStore })
         stop = isOffline ? startOffline(next, tracks) : startReplay(next, tracks)
         setDataSource(next)
       })
