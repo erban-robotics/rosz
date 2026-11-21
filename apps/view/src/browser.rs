@@ -71,7 +71,11 @@ pub fn open(url: &str) -> Result<Option<AppWindow>, String> {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .map(|_| None)
+        .map(|mut child| {
+            // xdg-open 交给浏览器后很快退出, 后台收掉, 不留僵尸
+            std::thread::spawn(move || child.wait());
+            None
+        })
         .map_err(|e| format!("xdg-open 失败: {e}"))
 }
 

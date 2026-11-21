@@ -41,6 +41,8 @@ pub enum Outgoing {
 }
 
 struct Queue {
+    /// 第几次 open 建的; 同一订阅号重订后旧转发任务的迟到帧按它认出来丢掉
+    generation: u64,
     topic: String,
     large: bool,
     /// (接收时间纳秒, 帧)
@@ -58,6 +60,15 @@ struct State {
     in_flight: usize,
     /// 小消息与大消息各自上次取到的订阅号, 轮流取从它之后开始
     cursors: [u32; 2],
+    /// 上次 open 给的世代号
+    generation: u64,
+}
+
+impl State {
+    /// 去掉一个队列时从待发字节里减掉它剩下的帧
+    fn discard(&mut self, queue: &Queue) {
+        self.queued_bytes -= queue.frames.iter().map(|(_, f)| f.len()).sum::<usize>();
+    }
 }
 
 #[derive(Default)]
@@ -67,29 +78,32 @@ pub struct Outbox {
 }
 
 impl Outbox {
-    /// 新订阅 (或同一订阅号重订) 建一个空队列
-    pub fn open(&self, subscription: u32, topic: &str, type_name: &str) {
+    /// 新订阅 (或同一订阅号重订) 建一个空队列, 返回其世代号; 转发任务推帧时带上, 不是当前世代的丢弃
+    pub fn open(&self, subscription: u32, topic: &str, type_name: &str) -> u64 {
         let mut state = self.state.lock().unwrap();
-        let queue = Queue { topic: topic.into(), large: is_large(type_name), frames: VecDeque::new(), dropped: 0 };
+        state.generation += 1;
+        let generation = state.generation;
+        let queue = Queue { generation, topic: topic.into(), large: is_large(type_name), frames: VecDeque::new(), dropped: 0 };
         if let Some(previous) = state.queues.insert(subscription, queue) {
-            state.queued_bytes -= previous.frames.iter().map(|(_, f)| f.len()).sum::<usize>();
+            state.discard(&previous);
         }
+        generation
     }
 
     /// 退订: 丢掉该路待发的帧
     pub fn close(&self, subscription: u32) {
         let mut state = self.state.lock().unwrap();
         if let Some(queue) = state.queues.remove(&subscription) {
-            state.queued_bytes -= queue.frames.iter().map(|(_, f)| f.len()).sum::<usize>();
+            state.discard(&queue);
         }
     }
 
-    /// 转发任务推一帧; 不等待. 订阅已关掉的丢弃
-    pub fn push(&self, subscription: u32, receive_time_ns: i64, frame: Vec<u8>) {
+    /// 转发任务推一帧; 不等待. 订阅已关掉或已重订 (`generation` 不是当前的) 的丢弃
+    pub fn push(&self, subscription: u32, generation: u64, receive_time_ns: i64, frame: Vec<u8>) {
         let mut guard = self.state.lock().unwrap();
         let state = &mut *guard;
         let pending = state.queued_bytes + state.in_flight;
-        let Some(queue) = state.queues.get_mut(&subscription) else { return };
+        let Some(queue) = state.queues.get_mut(&subscription).filter(|q| q.generation == generation) else { return };
         let len = frame.len();
         if queue.large {
             match queue.frames.front_mut() {

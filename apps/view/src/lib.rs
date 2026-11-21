@@ -2,7 +2,8 @@
 //! 以浏览器独立窗口打开, 关窗即退出. 后端只转原始 CDR, 解码与渲染在前端 (rosz-ui + rosz-wasm).
 //!
 //! 退出判定 (先到者): Chromium `--app` 子进程退出且已无连接; 或曾有连接而现在全断超过 [`DISCONNECT_GRACE`];
-//! 或 Ctrl+C. 子进程在首个连接前就退出 (同一配置目录已有实例, 窗口归了它) 时不算关窗, 只看 WebSocket.
+//! 或 Ctrl+C. 子进程在首个连接前就退出 (同一配置目录已有实例, 窗口归了它) 时不算关窗, 只看 WebSocket;
+//! 此时 (以及退回 `xdg-open` 时) 若 [`FIRST_CONNECT_TIMEOUT`] 内一直没有连接, 提示后退出.
 
 mod browser;
 mod outbox;
@@ -30,6 +31,10 @@ use crate::protocol::{Hub, SUBPROTOCOL};
 pub const DEFAULT_PORT: u16 = 7450;
 /// WebSocket 全断后等这么久仍无连接即退出 (容许刷新页面)
 pub const DISCONNECT_GRACE: Duration = Duration::from_secs(5);
+/// 没有自己的窗口可等 (子进程已退出或退回 xdg-open) 时, 这么久仍无首个连接即退出
+pub const FIRST_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+/// 前端未构建时的提示
+const NOT_BUILT: &str = "前端未构建 (apps/view/web/dist 为空): 先在 apps/view/web 里 npm run build 再编译";
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
 /// 连接的内核发送缓冲: 默认自动调大到几 MB, 前端读得慢时帧先堆在内核里, 发送队列的取舍 (见 [`outbox`]) 就失效了.
 /// 本机回环实测 64 KiB 吞吐与默认无异 (16 KiB 起明显变慢); 内核按设的两倍分配
@@ -70,7 +75,7 @@ pub async fn run(session: Session, options: Options) -> Result<(), Error> {
     let server = tokio::spawn(async move { axum::serve(listener, app).await });
 
     if Assets::get("index.html").is_none() {
-        eprintln!("注意: 前端未构建 (apps/view/web/dist 为空), 页面无内容; 先在 apps/view/web 里 npm run build 再编译");
+        eprintln!("注意: {NOT_BUILT}");
     }
     let mut window = None;
     if options.open {
@@ -88,6 +93,8 @@ pub async fn run(session: Session, options: Options) -> Result<(), Error> {
 
     let mut ever_connected = false;
     let mut child_exited = false;
+    // 开始等首个连接而没有自己的窗口可等的时刻: 退回 xdg-open 时为启动时, 否则为子进程退出时
+    let mut unwatched_since = (options.open && window.is_none()).then(tokio::time::Instant::now);
     let mut idle_since: Option<tokio::time::Instant> = None;
     let mut ticker = tokio::time::interval(POLL_INTERVAL);
     let mut interrupt = std::pin::pin!(tokio::signal::ctrl_c());
@@ -101,6 +108,7 @@ pub async fn run(session: Session, options: Options) -> Result<(), Error> {
             result = async { window.as_mut().unwrap().wait().await }, if window.is_some() && !child_exited => {
                 let _ = result;
                 child_exited = true;
+                unwatched_since.get_or_insert_with(tokio::time::Instant::now);
             }
             _ = connections.changed() => {}
             _ = ticker.tick() => {}
@@ -118,6 +126,10 @@ pub async fn run(session: Session, options: Options) -> Result<(), Error> {
             continue;
         }
         if !ever_connected {
+            if unwatched_since.is_some_and(|since| since.elapsed() >= FIRST_CONNECT_TIMEOUT) {
+                eprintln!("{} 秒内没有页面连上来, 退出 (窗口可能没打开, 或交给了已在运行的浏览器)", FIRST_CONNECT_TIMEOUT.as_secs());
+                break;
+            }
             continue;
         }
         if child_exited {
@@ -168,7 +180,7 @@ async fn asset(uri: Uri) -> Response {
         Some(file) if !path.is_empty() => (path, file),
         _ => match Assets::get("index.html") {
             Some(file) => ("index.html", file),
-            None => return (StatusCode::NOT_FOUND, "前端未构建: 在 apps/view/web 里 npm run build 后重新编译").into_response(),
+            None => return (StatusCode::NOT_FOUND, NOT_BUILT).into_response(),
         },
     };
     // 带内容 hash 的构建产物可长期缓存, index.html 每次取新的

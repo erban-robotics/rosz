@@ -253,7 +253,8 @@ impl Connection {
         if let Some(previous) = self.subscriptions.remove(&id) {
             previous.abort();
         }
-        self.outbox.open(id, &topic, &type_name);
+        // 旧任务 abort 后可能还跑到下一个让出点, 带世代号推帧, 迟到的旧话题帧进不了新队列
+        let generation = self.outbox.open(id, &topic, &type_name);
         let outbox = self.outbox.clone();
         let task = tokio::spawn(async move {
             while let Some(message) = subscription.recv().await {
@@ -262,7 +263,7 @@ impl Connection {
                 frame.extend_from_slice(&id.to_le_bytes());
                 frame.extend_from_slice(&(message.receive_time_ns as u64).to_le_bytes());
                 frame.extend_from_slice(&message.payload);
-                outbox.push(id, message.receive_time_ns, frame);
+                outbox.push(id, generation, message.receive_time_ns, frame);
             }
         });
         self.subscriptions.insert(id, task);
