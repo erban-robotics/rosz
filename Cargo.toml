@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/decode", "crates/access", "apps/cli", "apps/view","bindings/python", "bindings/wasm"]
+members = ["crates/decode", "crates/access", "apps/cli", "apps/view", "bindings/python", "bindings/wasm"]
 
 
 [workspace.package]

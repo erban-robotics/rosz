@@ -16,6 +16,22 @@ const REDRAW_MS = 100
 const FIELD_REFRESH_MS = 1000
 const CHART_HEIGHT = 160
 const SERIES_COLORS = 8
+// toFixed 的位数上限
+const MAX_DECIMALS = 20
+
+/**
+ * 纵轴刻度: 小数位取到刻度间隔能精确写出 (如 0.000025 要 6 位), 相邻刻度必不相同. uPlot 默认格式最多 3 位小数,
+ * 小幅抖动的值 (真机关节约 -0.0131 上下) 刻度全显示成一样的
+ */
+function tickLabels(ticks: number[], increment: number) {
+  let decimals = 0
+  while (decimals < MAX_DECIMALS && increment > 0) {
+    const scaled = increment * 10 ** decimals
+    if (Math.abs(scaled - Math.round(scaled)) < 1e-6 * scaled) break
+    decimals += 1
+  }
+  return ticks.map((tick) => tick.toFixed(decimals))
+}
 
 /** 一路最新样本的数值字段名, 按消息里的次序 */
 function useFieldNames({ state }: DataSource, channel: ChannelInfo) {
@@ -53,7 +69,7 @@ function Chart({ dataSource, channel, fields }: { dataSource: DataSource; channe
         width: container.clientWidth,
         height: CHART_HEIGHT,
         scales: { x: { time: false, auto: false, range: () => [now - WINDOW_SECONDS, now] } },
-        axes: [{ ...axis, values: (_plot, ticks) => ticks.map((tick) => `${tick.toFixed(1)}s`) }, { ...axis, size: 80 }],
+        axes: [{ ...axis, values: (_plot, ticks) => ticks.map((tick) => `${tick.toFixed(1)}s`) }, { ...axis, size: 80, values: (_plot, ticks, _axis, _space, increment) => tickLabels(ticks, increment) }],
         series: [
           { label: '时刻', value: (_plot, value) => (value == null ? '—' : `${value.toFixed(3)}s`) },
           ...fields.map((field, index) => ({

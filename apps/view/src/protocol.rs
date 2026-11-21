@@ -30,11 +30,11 @@ const MESSAGE_DATA_OPCODE: u8 = 0x01;
 /// ros2msg 多定义拼接的分隔行 (同 ros2 bag / foxglove)
 const SCHEMA_SEPARATOR: &str = "================================================================================";
 
-/// 通道目录的一次变化, 广播给各连接
+/// 通道目录的一次变化, 广播给各连接: 涉及的通道号 (连接记已告知的通道, 落后时补差) 与要发的文本帧
 #[derive(Clone)]
 enum CatalogEvent {
-    Advertise(Utf8Bytes),
-    Unadvertise(Utf8Bytes),
+    Advertise(Vec<u32>, Utf8Bytes),
+    Unadvertise(Vec<u32>, Utf8Bytes),
 }
 
 struct Channel {
@@ -94,6 +94,7 @@ impl Hub {
         let removed: Vec<u32> = catalog.channels.iter().filter(|(k, _)| !current.contains(*k)).map(|(_, c)| c.id).collect();
         catalog.channels.retain(|k, _| current.contains(k));
         let mut added = Vec::new();
+        let mut added_ids = Vec::new();
         for topic in &topics {
             let key = key_of(topic);
             if catalog.channels.contains_key(&key) {
@@ -103,27 +104,24 @@ impl Hub {
             let id = catalog.next_id;
             let json = channel_json(id, topic, registry);
             added.push(json.clone());
+            added_ids.push(id);
             catalog.channels.insert(key, Channel { id, topic: topic.name.clone(), type_name: topic.type_name.clone(), json });
         }
         if !removed.is_empty() {
-            let _ = self.events.send(CatalogEvent::Unadvertise(text(&json!({"op": "unadvertise", "channelIds": removed}))));
+            let body = text(&json!({"op": "unadvertise", "channelIds": removed}));
+            let _ = self.events.send(CatalogEvent::Unadvertise(removed, body));
         }
         if !added.is_empty() {
-            let _ = self.events.send(CatalogEvent::Advertise(text(&json!({"op": "advertise", "channels": added}))));
+            let _ = self.events.send(CatalogEvent::Advertise(added_ids, text(&json!({"op": "advertise", "channels": added}))));
         }
     }
 
     /// 一个 WebSocket 连接: 先发 serverInfo 与全部通道, 再处理订阅退订, 转发数据帧与目录增量.
     pub async fn serve(self: Arc<Self>, mut socket: WebSocket) {
         self.connections.send_modify(|n| *n += 1);
-        let (mut events, hello) = {
-            let catalog = self.catalog.lock().unwrap();
-            // 按话题名排, 前端目录 (与面板里各路的先后) 每次一致
-            let mut channels: Vec<&Channel> = catalog.channels.values().collect();
-            channels.sort_by(|a, b| a.topic.cmp(&b.topic));
-            let channels: Vec<&Json> = channels.into_iter().map(|c| &c.json).collect();
-            (self.events.subscribe(), json!({"op": "advertise", "channels": channels}))
-        };
+        // 已告知本连接的通道号
+        let mut advertised = HashSet::new();
+        let (mut events, hello, _) = self.catch_up(&mut advertised);
         let info = json!({
             "op": "serverInfo",
             "name": "rosz view",
@@ -134,7 +132,7 @@ impl Hub {
         let outbox = Arc::new(Outbox::default());
         let mut connection = Connection { hub: self.clone(), outbox: outbox.clone(), subscriptions: HashMap::new() };
         let mut ok = socket.send(WsMessage::Text(text(&info))).await.is_ok()
-            && socket.send(WsMessage::Text(text(&hello))).await.is_ok();
+            && socket.send(WsMessage::Text(hello)).await.is_ok();
         while ok {
             ok = tokio::select! {
                 incoming = socket.recv() => match incoming {
@@ -149,11 +147,27 @@ impl Hub {
                     Some(Ok(_)) => true,
                 },
                 event = events.recv() => match event {
-                    Ok(CatalogEvent::Advertise(body) | CatalogEvent::Unadvertise(body)) => {
+                    Ok(CatalogEvent::Advertise(ids, body)) => {
+                        advertised.extend(ids);
                         socket.send(WsMessage::Text(body)).await.is_ok()
                     }
-                    // 落后太多丢了增量: 断开, 前端重连后拿全量
-                    Err(_) => false,
+                    Ok(CatalogEvent::Unadvertise(ids, body)) => {
+                        for id in ids {
+                            advertised.remove(&id);
+                        }
+                        socket.send(WsMessage::Text(body)).await.is_ok()
+                    }
+                    // 落后太多丢了增量: 重新接上广播, 按当前目录补发差额, 连接不断 (前端不重连)
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        let (receiver, added, removed) = self.catch_up(&mut advertised);
+                        events = receiver;
+                        let ok = match removed {
+                            Some(body) => socket.send(WsMessage::Text(body)).await.is_ok(),
+                            None => true,
+                        };
+                        ok && socket.send(WsMessage::Text(added)).await.is_ok()
+                    }
+                    Err(broadcast::error::RecvError::Closed) => false,
                 },
                 outgoing = outbox.next() => match outgoing {
                     Outgoing::Dropped(status) => socket.send(WsMessage::Text(text(&status))).await.is_ok(),
@@ -167,6 +181,22 @@ impl Hub {
         }
         drop(connection);
         self.connections.send_modify(|n| *n -= 1);
+    }
+
+    /// 按当前目录与已告知的通道 (`advertised`, 就地更新) 比出差额: 新接上的广播接收端, 新增通道的 `advertise`
+    /// (可能为空), 没了的通道的 `unadvertise` (没有为 None). 持目录锁取快照并接广播, 与 [`Hub::refresh`] 不交错.
+    fn catch_up(&self, advertised: &mut HashSet<u32>) -> (broadcast::Receiver<CatalogEvent>, Utf8Bytes, Option<Utf8Bytes>) {
+        let catalog = self.catalog.lock().unwrap();
+        let receiver = self.events.subscribe();
+        let current: HashSet<u32> = catalog.channels.values().map(|c| c.id).collect();
+        let removed: Vec<u32> = advertised.difference(&current).copied().collect();
+        // 按话题名排, 前端目录 (与面板里各路的先后) 每次一致
+        let mut added: Vec<&Channel> = catalog.channels.values().filter(|c| !advertised.contains(&c.id)).collect();
+        added.sort_by(|a, b| a.topic.cmp(&b.topic));
+        let added: Vec<&Json> = added.into_iter().map(|c| &c.json).collect();
+        *advertised = current;
+        let removed = (!removed.is_empty()).then(|| text(&json!({"op": "unadvertise", "channelIds": removed})));
+        (receiver, text(&json!({"op": "advertise", "channels": added})), removed)
     }
 }
 
@@ -223,7 +253,8 @@ impl Connection {
         if let Some(previous) = self.subscriptions.remove(&id) {
             previous.abort();
         }
-        self.outbox.open(id, &topic, &type_name);
+        // 旧任务 abort 后可能还跑到下一个让出点, 带世代号推帧, 迟到的旧话题帧进不了新队列
+        let generation = self.outbox.open(id, &topic, &type_name);
         let outbox = self.outbox.clone();
         let task = tokio::spawn(async move {
             while let Some(message) = subscription.recv().await {
@@ -232,7 +263,7 @@ impl Connection {
                 frame.extend_from_slice(&id.to_le_bytes());
                 frame.extend_from_slice(&(message.receive_time_ns as u64).to_le_bytes());
                 frame.extend_from_slice(&message.payload);
-                outbox.push(id, message.receive_time_ns, frame);
+                outbox.push(id, generation, message.receive_time_ns, frame);
             }
         });
         self.subscriptions.insert(id, task);
