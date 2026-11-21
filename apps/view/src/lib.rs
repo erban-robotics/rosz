@@ -5,6 +5,7 @@
 //! 或 Ctrl+C. 子进程在首个连接前就退出 (同一配置目录已有实例, 窗口归了它) 时不算关窗, 只看 WebSocket.
 
 mod browser;
+mod outbox;
 mod protocol;
 
 use std::net::{Ipv4Addr, SocketAddr};
@@ -12,6 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Router;
+use axum::serve::ListenerExt;
 use axum::extract::{State, WebSocketUpgrade};
 use axum::http::{StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
@@ -29,6 +31,9 @@ pub const DEFAULT_PORT: u16 = 7450;
 /// WebSocket 全断后等这么久仍无连接即退出 (容许刷新页面)
 pub const DISCONNECT_GRACE: Duration = Duration::from_secs(5);
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
+/// 连接的内核发送缓冲: 默认自动调大到几 MB, 前端读得慢时帧先堆在内核里, 发送队列的取舍 (见 [`outbox`]) 就失效了.
+/// 本机回环实测 64 KiB 吞吐与默认无异 (16 KiB 起明显变慢); 内核按设的两倍分配
+const SOCKET_SEND_BUFFER: usize = 64 << 10;
 
 #[derive(RustEmbed)]
 #[folder = "web/dist"]
@@ -59,6 +64,9 @@ pub async fn run(session: Session, options: Options) -> Result<(), Error> {
     tokio::spawn(hub.clone().discover());
     let mut connections = hub.connections();
     let app = Router::new().route("/ws", get(websocket)).fallback(get(asset)).with_state(hub);
+    let listener = listener.tap_io(|tcp| {
+        let _ = socket2::SockRef::from(&*tcp).set_send_buffer_size(SOCKET_SEND_BUFFER);
+    });
     let server = tokio::spawn(async move { axum::serve(listener, app).await });
 
     if Assets::get("index.html").is_none() {

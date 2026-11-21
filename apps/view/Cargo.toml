@@ -14,4 +14,6 @@ serde_json.workspace = true
 thiserror.workspace = true
 axum = { version = "0.8", default-features = false, features = ["tokio", "http1", "ws"] }
 # 前端构建产物 (web/dist) 编进二进制; 未构建时为空, 页面提示先构建
+# 调小 WebSocket 连接的内核发送缓冲, 使发送背压 (见 src/outbox.rs) 看得到前端读得慢
+socket2 = "0.6"
 rust-embed = { version = "8", features = ["debug-embed", "mime-guess"] }

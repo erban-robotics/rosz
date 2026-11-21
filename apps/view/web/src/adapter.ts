@@ -7,6 +7,7 @@
  *   `format` + 压缩字节 (见 images.ts). 面板显示不了的图像 (不认识的格式, 空数据) 整路标为解不了并退订, 原因显示在话题树与面板上
  */
 import { type ChannelInfo, createDataSourceState, type DataSource, loadRosz, type Rosz, type Sample } from '@erban-robotics/rosz-ui'
+import { createDropTally, type DropTally } from './drops'
 import { COMPRESSED_IMAGE, type Converted, fromCompressed, fromRaw, isImageType, roleOf } from './images'
 
 const SUBPROTOCOL = 'foxglove.websocket.v1'
@@ -28,7 +29,7 @@ type AdvertisedChannel = {
 
 export type ConnectionStatus = 'connecting' | 'open' | 'closed'
 
-export type Viewer = { dataSource: DataSource }
+export type Viewer = { dataSource: DataSource; drops: DropTally }
 
 /**
  * 通道目录的一项: id 用话题名 (同名话题换类型时后端给新通道号, 目录里覆盖同一项). `role` 为首帧定的图像角色,
@@ -72,6 +73,7 @@ export function connect(onReady: (viewer: Viewer) => void, onStatus: (status: Co
   onStatus('connecting')
 
   const state = createDataSourceState({ mode: 'live' })
+  const drops = createDropTally()
   const channels = new Map<number, AdvertisedChannel>()
   const channelByTopic = new Map<string, number>()
   // 订阅号 -> 通道号; 通道号 -> 订阅号
@@ -121,7 +123,7 @@ export function connect(onReady: (viewer: Viewer) => void, onStatus: (status: Co
     switch (message.op) {
       case 'serverInfo': {
         const metadata = (message.metadata ?? {}) as { startTime?: string }
-        onReady({ dataSource: { state, zero: BigInt(metadata.startTime ?? '0') } })
+        onReady({ dataSource: { state, zero: BigInt(metadata.startTime ?? '0') }, drops })
         break
       }
       case 'advertise': {
@@ -157,9 +159,16 @@ export function connect(onReady: (viewer: Viewer) => void, onStatus: (status: Co
         state.removeChannels(removed)
         break
       }
-      case 'status':
-        console.warn(`后端: ${message.message as string}`)
+      case 'status': {
+        // 后端发送队列丢了某路的帧: 记不连续 (按时间累积的结果从播放头重建) 并累计条数
+        const channelId = subscriptionChannel.get(message.subscriptionId as number)
+        const channel = channelId === undefined ? undefined : channels.get(channelId)
+        if (typeof message.dropped === 'number' && channel) {
+          state.markDiscontinuity()
+          drops.add(channel.topic, message.dropped)
+        } else console.warn(`后端: ${message.message as string}`)
         break
+      }
     }
   }
 

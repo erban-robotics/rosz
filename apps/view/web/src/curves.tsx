@@ -4,9 +4,10 @@
  * rosz-ui 的序列泳道按全程排, 不跟实时窗口, 消息树也没有 "点字段画曲线" 的入口, 先在查看器里画.
  */
 import { type ChannelInfo, type DataSource, secondsAt, WHOLE_TIMELINE } from '@erban-robotics/rosz-ui'
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
+import { toggleCurveField, useChosenCurves } from './curves-store'
 import { fieldsOf } from './fields'
 
 const WINDOW_SECONDS = 10
@@ -115,6 +116,8 @@ function TopicCurves({
   onToggle: (field: string) => void
 }) {
   const names = useFieldNames(dataSource, channel)
+  // 记下的字段这次的消息里没有 (如数组变短) 时先不画, 记忆保留
+  const shown = useMemo(() => chosen.filter((field) => names.includes(field)), [chosen, names])
   return (
     <section aria-label={`${channel.name} 的曲线`} className="flex flex-col gap-1 rounded-md bg-surface-2 p-2">
       <div className="flex items-baseline gap-2">
@@ -138,16 +141,16 @@ function TopicCurves({
           )
         })}
       </ul>
-      {chosen.length > 0 && <Chart dataSource={dataSource} channel={channel} fields={chosen} />}
+      {shown.length > 0 && <Chart dataSource={dataSource} channel={channel} fields={shown} />}
     </section>
   )
 }
 
 /**
- * 消息树面板里各话题 (能解的) 的曲线区. 所选字段只在本次打开内记着. 自设需求窗口: 消息树面板关掉时曲线照样有数据.
+ * 消息树面板里各话题 (能解的) 的曲线区. 所选字段本机记住 (见 curves-store.ts). 自设需求窗口: 消息树面板关掉时曲线照样有数据.
  */
 export function Curves({ dataSource, channels }: { dataSource: DataSource; channels: ChannelInfo[] }) {
-  const [chosen, setChosen] = useState<Record<string, string[]>>({})
+  const chosen = useChosenCurves()
   const panelId = useId()
   const { state } = dataSource
   const key = channels.map((channel) => channel.id).join('\n')
@@ -155,13 +158,6 @@ export function Curves({ dataSource, channels }: { dataSource: DataSource; chann
     state.setDemand(panelId, key ? { channels: key.split('\n'), range: { start: 0n, end: 0n } } : null)
   }, [state, panelId, key])
   useEffect(() => () => state.setDemand(panelId, null), [state, panelId])
-
-  const toggle = (topic: string, field: string) =>
-    setChosen((previous) => {
-      const current = previous[topic] ?? []
-      const next = current.includes(field) ? current.filter((item) => item !== field) : [...current, field]
-      return { ...previous, [topic]: next }
-    })
 
   return (
     <div className="flex flex-col gap-2 text-xs">
@@ -171,7 +167,7 @@ export function Curves({ dataSource, channels }: { dataSource: DataSource; chann
           dataSource={dataSource}
           channel={channel}
           chosen={chosen[channel.id] ?? []}
-          onToggle={(field) => toggle(channel.id, field)}
+          onToggle={(field) => toggleCurveField(channel.id, field)}
         />
       ))}
     </div>

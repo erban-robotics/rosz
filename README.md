@@ -9,7 +9,7 @@
 产物都挂在 [GitHub Release](https://github.com/erban-robotics/rosz/releases), 不发公共平台. 以 `v0.1.0` 为例:
 
 - Python (x86_64 / aarch64, Python 3.10+): `pip install rosz --find-links https://github.com/erban-robotics/rosz/releases/expanded_assets/v0.1.0`
-- CLI: 下载 `rosz-0.1.0-linux-x86_64` (或 `-aarch64`), musl 静态二进制, `chmod +x` 即用
+- CLI 与查看器: 下载 `rosz-0.1.0-linux-x86_64` (或 `-aarch64`), musl 静态单文件, 查看器前端已嵌入, `chmod +x` 即用 (`rosz view` 即查看器)
 - npm (浏览器解码): `"@erban-robotics/rosz-wasm": "https://github.com/erban-robotics/rosz/releases/download/v0.1.0/erban-robotics-rosz-wasm-0.1.0.tgz"`. npm 12 起默认 `allow-remote=none`, 拒装远程 tgz, 需在项目 `.npmrc` 写 `allow-remote=all` (或安装时加 `--allow-remote=all`)
 - Rust: `rosz-access = { git = "https://github.com/erban-robotics/rosz", tag = "v0.1.0" }` (只解码用 `rosz-decode`)
 
@@ -43,11 +43,13 @@ rosz view --router tcp/192.168.1.10:7447    # 或 export ROSZ_ROUTER 后直接 r
 
 界面: 左侧话题树 (按命名空间折叠, 已订阅的显示频率, 解不了的类型变灰, transient_local 标 "静态"), 右侧面板区 (图像面板与消息树面板, 可拖动调整, "添加视图" 可加别的面板) 与其下的曲线区. 面板要看哪些话题才订阅哪些:
 
-- 点话题树里的话题即加进面板, 再点移出. 图像话题进图像面板, 多路并排; 其余进消息树面板, 能解的另在曲线区列出数值字段, 点字段画最近 10 秒的曲线. 加了哪些存在浏览器本地, 下次打开仍在; 首次打开自动挑一路彩色, 一路深度
+- 点话题树里的话题 (或 Ctrl+K 按话题名与类型搜索, 空格分开多个词, 回车) 即加进面板, 再点移出. 图像话题进图像面板, 多路并排; 其余进消息树面板, 能解的另在曲线区列出数值字段, 点字段画最近 10 秒的曲线. 加了哪些, 面板的拖动排布与曲线所选字段都存在浏览器本地 (固定端口 7450 同源才保留), 下次打开仍在; 首次打开自动挑一路彩色, 一路深度. 关掉了图像或消息树面板后再点话题, 面板在右侧重新打开; "恢复默认布局" 只复位排布, 不清已加的话题
 - 图像: `CompressedImage` 的 JPEG / PNG 彩色, `16UC1; zstd` 与 `16UC1; compressedDepth` 深度 (伪彩色, 悬停显示该点毫米值); 原始 `Image` 的 `rgb8` `bgr8` `rgba8` `bgra8` `mono8` 彩色与 `16UC1` `mono16` `32FC1` 深度. 不支持的格式 (如 zstd_image_transport 的 `zstd`) 与空数据整路变灰, 面板上写明原因
 - 无定义的类型变灰, 消息树里只显示名称, 类型与原因
 
 后端与前端之间为 `foxglove.websocket.v1` 的子集 (见 `apps/view/src/protocol.rs`): 后端只转原始 CDR 不解码, 数据帧带后端 PC 时钟的接收时间, 前端以它为接收时刻; 解码与渲染在前端 (共享 UI 包 rosz-ui + rosz-wasm).
+
+背压 (前端处理不过来时, 见 `apps/view/src/outbox.rs`): 每个订阅一个发送队列. `CompressedImage` `Image` `PointCloud2` `CompressedVideo` 每路只留最新一条, 连接待发字节低于 4 MB 才入队 (降帧, 不通知); 其余话题各留约 1 秒, 满了丢最旧的并发 "已丢 N 条" (`status` 帧附 `subscriptionId` 与 `dropped`), 前端记一次不连续并在顶上提示累计条数. 先发小消息再发大消息, 图像不挡在小消息前面.
 
 ## Python
 
@@ -131,4 +133,4 @@ target/release/rosz view --router tcp/127.0.0.1:7447
 
 ## 发版
 
-整个 workspace 统一版本号 (`Cargo.toml` 的 `workspace.package.version`, Python 与 npm 包同此). 合进 main 后手动推 `vX.Y.Z` tag, GitHub 托管 runner (`.github/workflows/release.yml`) 构建 wheel (两架构), WASM tgz, CLI 二进制并挂到 Release.
+整个 workspace 统一版本号 (`Cargo.toml` 的 `workspace.package.version`, Python 与 npm 包同此). 合进 main 后手动推 `vX.Y.Z` tag, GitHub 托管 runner (`.github/workflows/release.yml`) 构建 wheel (两架构), WASM tgz, CLI 二进制并挂到 Release. CLI 二进制构建前先 `npm ci && npm run build` 查看器前端, 构建后检查前端已嵌入, 所以 Release 上的 `rosz` 即带界面的查看器单文件.
