@@ -6,12 +6,12 @@
 
 ## 安装
 
-产物都挂在 [GitHub Release](https://github.com/erban-robotics/rosz/releases), 不发公共平台. 以 `v0.2.1` 为例:
+产物都挂在 [GitHub Release](https://github.com/erban-robotics/rosz/releases), 不发公共平台. 以 `v0.2.2` 为例:
 
-- Python (x86_64 / aarch64, Python 3.10+): `pip install rosz --find-links https://github.com/erban-robotics/rosz/releases/expanded_assets/v0.2.1`
-- CLI 与查看器: 下载 `rosz-0.2.1-linux-x86_64` (或 `-aarch64`), musl 静态单文件, 查看器前端已嵌入, `chmod +x` 即用 (`rosz view` 即查看器)
-- npm (浏览器解码): `"@erban-robotics/rosz-wasm": "https://github.com/erban-robotics/rosz/releases/download/v0.2.1/erban-robotics-rosz-wasm-0.2.1.tgz"`. npm 12 起默认 `allow-remote=none`, 拒装远程 tgz, 需在项目 `.npmrc` 写 `allow-remote=all` (或安装时加 `--allow-remote=all`)
-- Rust: `rosz-access = { git = "https://github.com/erban-robotics/rosz", tag = "v0.2.1" }` (只解码用 `rosz-decode`)
+- Python (x86_64 / aarch64, Python 3.10+): `pip install rosz --find-links https://github.com/erban-robotics/rosz/releases/expanded_assets/v0.2.2`
+- CLI 与查看器: 下载 `rosz-0.2.2-linux-x86_64` (或 `-aarch64`), musl 静态单文件, 查看器前端已嵌入, `chmod +x` 即用 (`rosz view` 即查看器)
+- npm (浏览器解码): `"@erban-robotics/rosz-wasm": "https://github.com/erban-robotics/rosz/releases/download/v0.2.2/erban-robotics-rosz-wasm-0.2.2.tgz"`. npm 12 起默认 `allow-remote=none`, 拒装远程 tgz, 需在项目 `.npmrc` 写 `allow-remote=all` (或安装时加 `--allow-remote=all`)
+- Rust: `rosz-access = { git = "https://github.com/erban-robotics/rosz", tag = "v0.2.2" }` (只解码用 `rosz-decode`)
 
 ## router 地址
 
