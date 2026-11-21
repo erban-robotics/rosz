@@ -1,13 +1,24 @@
 /**
  * rosz 查看器: 左侧常驻话题树 (按命名空间折叠), 右侧面板区 (rosz-ui 视图组装, 实时模式) 与其下的曲线区.
- * 点话题树里的图像话题即加进 (再点即移出) 图像面板, 多路并排; TF 与点云话题加进 3D 面板 (面板区右侧, 有选中的才显示);
+ * 点话题树里的图像话题即加进 (再点即移出) 图像面板, 多路并排; TF 与点云话题加进 3D 面板 (rosz-ui 的 3D 场景视图, 面板区右侧,
+ * 有选中的才显示);
  * 点其余话题加进消息树面板, 能解的另在曲线区列出数值字段.
  * 面板要看哪些话题, 适配器就订阅哪些 (见 layout.ts, adapter.ts). Ctrl+K 按名或类型搜话题 (见 search.tsx).
  * 面板排布与曲线所选字段本机记住. 后端发送队列丢了小消息时顶上提示累计条数 (见 drops.ts).
  */
-import { Component, lazy, type ReactNode, StrictMode, Suspense, useEffect, useMemo, useState } from 'react'
+import { Component, type ReactNode, StrictMode, useEffect, useMemo, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { type ChannelInfo, ChannelList, HintProvider, type Playback, useCatalog, useLivePlayback, ViewComposition } from '@erban-robotics/rosz-ui'
+import {
+  type ChannelInfo,
+  ChannelList,
+  DataSourceContext,
+  HintProvider,
+  type Playback,
+  Scene3dView,
+  useCatalog,
+  useLivePlayback,
+  ViewComposition,
+} from '@erban-robotics/rosz-ui'
 import { connect, type ConnectionStatus, type Viewer } from './adapter'
 import { Curves } from './curves'
 import { useDrops } from './drops'
@@ -23,8 +34,6 @@ const STATUS_TEXT: Record<ConnectionStatus, string> = {
 }
 // 首个图像话题出现后等这么久再挑默认的几路, 等目录到齐
 const PICK_DELAY_MS = 1000
-// 3D 面板 (three) 单独一块, 选了空间话题才加载
-const ScenePanel = lazy(() => import('./scene3d'))
 
 // 丢帧提示里最多列几路
 const DROP_TOPICS_SHOWN = 3
@@ -42,7 +51,7 @@ function DropNotice({ viewer }: { viewer: Viewer }) {
   )
 }
 
-/** 3D 面板出错 (典型是浏览器拿不到 WebGL) 只在面板内提示, 不让整页白屏; 改选话题后重试 */
+/** 3D 面板出错只在面板内提示, 不让整页白屏 (拿不到 WebGL 由 rosz-ui 的 3D 场景自己在面板内提示, 这里兜住其余渲染错误); 改选话题后重试 */
 class PanelBoundary extends Component<{ resetKey: string; children: ReactNode }, { error?: Error; resetKey: string }> {
   state: { error?: Error; resetKey: string } = { resetKey: this.props.resetKey }
   static getDerivedStateFromError(error: Error) {
@@ -58,7 +67,7 @@ class PanelBoundary extends Component<{ resetKey: string; children: ReactNode },
 }
 
 function Workspace({ viewer }: { viewer: Viewer }) {
-  const { dataSource, scene } = viewer
+  const { dataSource } = viewer
   const epoch = useLayoutEpoch()
   const playback: Playback = useLivePlayback(dataSource)
   const catalog = useCatalog(dataSource.state)
@@ -70,6 +79,10 @@ function Workspace({ viewer }: { viewer: Viewer }) {
     return () => clearTimeout(timer)
   }, [hasImage, dataSource])
   const sceneTopics = useSceneTopics(catalog)
+  const sceneChannels = useMemo(
+    () => catalog.filter((channel) => channel.kind === 'spatial' && sceneTopics.includes(channel.name)),
+    [catalog, sceneTopics],
+  )
   const selected = useMemo(() => [...bound.images, ...bound.messages, ...sceneTopics], [bound.images, bound.messages, sceneTopics])
   const plotted = useMemo(
     () => catalog.filter((channel) => channel.kind === 'message' && !channel.undecodable && bound.messages.includes(channel.name)),
@@ -100,9 +113,11 @@ function Workspace({ viewer }: { viewer: Viewer }) {
             {sceneTopics.length > 0 && (
               <div className="min-w-0 flex-[2]">
                 <PanelBoundary resetKey={sceneTopics.join('\n')}>
-                  <Suspense fallback={<p className="text-xs text-muted-foreground">加载 3D 面板</p>}>
-                    <ScenePanel dataSource={dataSource} scene={scene} topics={sceneTopics} catalog={catalog} />
-                  </Suspense>
+                  <section aria-label="3D" className="h-full rounded-md border bg-surface-1 p-1">
+                    <DataSourceContext.Provider value={dataSource}>
+                      <Scene3dView channels={sceneChannels} clock={playback.clock} />
+                    </DataSourceContext.Provider>
+                  </section>
                 </PanelBoundary>
               </div>
             )}
