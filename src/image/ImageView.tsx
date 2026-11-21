@@ -21,6 +21,7 @@ const KEYPOINT_OUTLINE_PIXELS = 2
 // 播放时需求窗口向前延伸的时长 (纳秒): 15Hz下即当前块之后再预取两块; 暂停时窗口只是播放头
 const PREFETCH_NANOSECONDS = 2_000_000_000n
 const NANOSECONDS_PER_MILLISECOND = 1e6
+const NO_CHANNELS: string[] = []
 
 type OverlayOnStream = Exclude<ImageOverlay, { kind: 'invalid' }> & { channel: string }
 type Size = { width: number; height: number }
@@ -305,10 +306,12 @@ function StreamFigure({
         />
       </div>
       <figcaption className="flex items-baseline gap-2 text-xs text-muted-foreground">
-        <span className="font-mono">{channel.name}</span>
-        {channel.role && <span>{ROLE_LABELS[channel.role] ?? channel.role}</span>}
+        <span className="min-w-0 truncate font-mono" title={channel.name}>
+          {channel.name}
+        </span>
+        {channel.role && <span className="shrink-0">{ROLE_LABELS[channel.role] ?? channel.role}</span>}
         {sampleDeviationOf !== null && <SampleDeviation sampleTime={sampleDeviationOf} />}
-        {frameIndex >= 0 && <span className="ml-auto font-mono">#{frameIndex}</span>}
+        {frameIndex >= 0 && <span className="ml-auto shrink-0 font-mono">#{frameIndex}</span>}
       </figcaption>
     </figure>
   )
@@ -332,10 +335,11 @@ function StreamGrid({ channels, overlays, isActive }: { channels: ChannelInfo[];
   const isLive = state.mode() === 'live'
   const panelId = useId()
   const ids = useMemo(() => channels.map((channel) => channel.id), [channels])
-  useChannels(state, ids)
+  // tab未显示时不订阅通道与时钟, 新样本不重渲
+  useChannels(state, isActive ? ids : NO_CHANNELS)
   // 各路所显示的样本连成的字符串: 任一路换帧才重渲
   const shownKey = useClockSelector(playback.clock, (time) =>
-    ids.map((id) => latestKey(state.latestAtOrBefore(id, nanosecondsAt(zero, time)))).join(','),
+    isActive ? ids.map((id) => latestKey(state.latestAtOrBefore(id, nanosecondsAt(zero, time)))).join(',') : '',
   )
 
   useEffect(() => {

@@ -96,6 +96,7 @@ export {
 export { columnsOf, type SeriesTrack } from './timeline/series'
 export { formatSeconds, latestIndexAtOrBefore } from './timeline/timeline'
 export { MessageView } from './message/MessageView'
+export { ChannelList } from './channels/ChannelList'
 export { type DecodedMessage, loadedRosz, loadRosz, type Rosz } from './message/rosz'
 
 // 悬停提示的Provider: 应用骨架挂一个 (面板里的提示须在其内)
