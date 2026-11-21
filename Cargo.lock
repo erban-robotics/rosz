@@ -2591,7 +2591,7 @@ dependencies = [
 
 [[package]]
 name = "rosz-access"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "rosz-decode",
  "strsim",
@@ -2603,7 +2603,7 @@ dependencies = [
 
 [[package]]
 name = "rosz-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "clap",
  "jpeg-encoder",
@@ -2616,7 +2616,7 @@ dependencies = [
 
 [[package]]
 name = "rosz-decode"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "png",
  "serde_json",
@@ -2628,7 +2628,7 @@ dependencies = [
 
 [[package]]
 name = "rosz-python"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "numpy",
  "pyo3",
@@ -2638,7 +2638,7 @@ dependencies = [
 
 [[package]]
 name = "rosz-view"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "axum",
  "rosz-access",
@@ -2652,7 +2652,7 @@ dependencies = [
 
 [[package]]
 name = "rosz-wasm"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "js-sys",
  "rosz-decode",
