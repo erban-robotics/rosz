@@ -1,14 +1,16 @@
-import { type PointerEvent, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { type PointerEvent, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { nanosecondsAt, secondsAt } from '../data-source/clock'
-import { useAxis, useChannelPayloads, useChannels, useDataSource } from '../data-source/react'
+import { useAxis, useChannelPayloads, useChannels, useDataSource, useDiscontinuity } from '../data-source/react'
 import { frameTimesOn } from '../data-source/time-axis'
 import type { ChannelInfo, ImagePayload, Sample } from '../data-source/types'
 import { useClockListener, useClockSelector } from '../playback/use-playback'
 import { latestIndexAtOrBefore } from '../timeline/timeline'
 import { useViewComposition } from '../views/view-context'
 import { type DecodedFrame, decodeImage } from './decode'
-import { createDepthRenderer, type DepthRenderer, depthRange } from './depth-renderer'
+import { createDepthRenderer, DEPTH_FAR_MILLIMETERS, DEPTH_NEAR_MILLIMETERS, type DepthRenderer } from './depth-renderer'
 import { type ImageOverlay, isOverlayKind, type KeypointsFrame, overlayFrameAt, type SegmentationFrame } from './image-overlay'
+import { useVideoPainter } from './video-decoder'
+import { demandStartOf, isVideoFormat, samplesToDecode } from './video-keyframes'
 
 const ROLE_LABELS: Record<string, string> = { camera: '相机', depth: '深度' }
 // 排布按的画面宽高比; 实际画面在格子里等比缩放
@@ -141,13 +143,16 @@ function SampleDeviation({ sampleTime }: { sampleTime: bigint }) {
 }
 
 // 画在canvas上的一帧: 彩色画2D, 深度用WebGL2伪彩色; 深度另留毫米值供悬停读
-type Painted = { width: number; height: number; depth: { data: Uint16Array; near: number; far: number } | null }
+type Painted = { width: number; height: number; depth: { data: Uint16Array } | null }
 
 /**
  * 把一个图像样本解码画到canvas上, 换样本即重解; `isActive`为false (tab未显示) 时不解. 解码中又来新样本时只解最新的,
  * 中间的跳过; 迟到的旧结果丢弃. 彩色与深度各用一个canvas (同一canvas不能先取2D再取WebGL2上下文).
+ * 视频不逐样本解: 给`videoPlan` (关键帧到目标帧的样本), 由这一路的视频解码器按序喂, 只画目标帧; 此时`payload`不用.
  */
-function useDecodedCanvas(payload: ImagePayload | undefined, isActive: boolean) {
+function useDecodedCanvas(payload: ImagePayload | undefined, videoPlan: Sample<ImagePayload>[] | null, isActive: boolean) {
+  const { state } = useDataSource()
+  const discontinuity = useDiscontinuity(state)
   const colorRef = useRef<HTMLCanvasElement>(null)
   const depthRef = useRef<HTMLCanvasElement>(null)
   const rendererRef = useRef<DepthRenderer | null | undefined>(undefined)
@@ -160,35 +165,35 @@ function useDecodedCanvas(payload: ImagePayload | undefined, isActive: boolean) 
     isActiveRef.current = isActive
   })
 
+  const paint = useCallback((frame: DecodedFrame) => {
+    if (frame.kind === 'color') {
+      const canvas = colorRef.current
+      if (!canvas) return frame.close()
+      if (canvas.width !== frame.width || canvas.height !== frame.height) {
+        canvas.width = frame.width
+        canvas.height = frame.height
+      }
+      canvas.getContext('2d')!.drawImage(frame.image, 0, 0)
+      frame.close()
+      setPainted((previous) =>
+        previous?.width === frame.width && previous.height === frame.height && previous.depth === null
+          ? previous
+          : { width: frame.width, height: frame.height, depth: null },
+      )
+      return
+    }
+    const canvas = depthRef.current
+    if (!canvas) return
+    if (rendererRef.current === undefined) rendererRef.current = createDepthRenderer(canvas)
+    if (!rendererRef.current) throw new Error('浏览器不支持WebGL2, 无法显示深度')
+    rendererRef.current.draw(frame, DEPTH_NEAR_MILLIMETERS, DEPTH_FAR_MILLIMETERS)
+    setPainted({ width: frame.width, height: frame.height, depth: { data: frame.data } })
+  }, [])
+
   useEffect(() => {
     latestRef.current = payload
-    if (!isActive || !payload || busyRef.current) return
+    if (!isActive || !payload || videoPlan || busyRef.current) return
     let isCurrent = true
-    const paint = (frame: DecodedFrame) => {
-      if (frame.kind === 'color') {
-        const canvas = colorRef.current
-        if (!canvas) return frame.close()
-        if (canvas.width !== frame.width || canvas.height !== frame.height) {
-          canvas.width = frame.width
-          canvas.height = frame.height
-        }
-        canvas.getContext('2d')!.drawImage(frame.image, 0, 0)
-        frame.close()
-        setPainted((previous) =>
-          previous?.width === frame.width && previous.height === frame.height && previous.depth === null
-            ? previous
-            : { width: frame.width, height: frame.height, depth: null },
-        )
-        return
-      }
-      const canvas = depthRef.current
-      if (!canvas) return
-      if (rendererRef.current === undefined) rendererRef.current = createDepthRenderer(canvas)
-      if (!rendererRef.current) throw new Error('浏览器不支持WebGL2, 无法显示深度')
-      const { near, far } = depthRange(frame.data)
-      rendererRef.current.draw(frame, near, far)
-      setPainted({ width: frame.width, height: frame.height, depth: { data: frame.data, near, far } })
-    }
     const run = async (next: ImagePayload) => {
       busyRef.current = true
       try {
@@ -212,7 +217,18 @@ function useDecodedCanvas(payload: ImagePayload | undefined, isActive: boolean) 
     return () => {
       isCurrent = false
     }
-  }, [payload, isActive])
+  }, [payload, videoPlan, isActive, paint])
+
+  useVideoPainter(
+    videoPlan,
+    discontinuity,
+    isActive,
+    (frame) => {
+      paint({ kind: 'color', image: frame, width: frame.displayWidth, height: frame.displayHeight, close: () => frame.close() })
+      setError(null)
+    },
+    setError,
+  )
 
   useEffect(
     () => () => {
@@ -241,7 +257,7 @@ function DepthReadout({ painted, hover }: { painted: Painted; hover: { x: number
     <span className="pointer-events-none absolute top-1 left-1 rounded-sm bg-surface-2/90 px-1.5 font-mono text-xs text-foreground-secondary">
       {hover
         ? `(${hover.x}, ${hover.y}) ${value === 0 ? '无效' : `${value} mm`}`
-        : `${depth.near}-${depth.far} mm`}
+        : `${DEPTH_NEAR_MILLIMETERS}-${DEPTH_FAR_MILLIMETERS} mm`}
     </span>
   )
 }
@@ -250,6 +266,7 @@ function DepthReadout({ painted, hover }: { painted: Painted; hover: { x: number
 function StreamFigure({
   channel,
   payload,
+  videoPlan,
   isActive,
   placeholder,
   frameIndex,
@@ -259,6 +276,8 @@ function StreamFigure({
 }: {
   channel: ChannelInfo
   payload: ImagePayload | undefined
+  // 视频: 从关键帧到所显示帧的样本; 非视频为null
+  videoPlan: Sample<ImagePayload>[] | null
   isActive: boolean
   placeholder: string
   frameIndex: number
@@ -267,7 +286,7 @@ function StreamFigure({
   sampleDeviationOf: bigint | null
   overlays: OverlayOnStream[]
 }) {
-  const { colorRef, depthRef, painted, error } = useDecodedCanvas(payload, isActive)
+  const { colorRef, depthRef, painted, error } = useDecodedCanvas(payload, videoPlan, isActive)
   const [hover, setHover] = useState<{ x: number; y: number } | null>(null)
   const isDepth = painted?.depth != null
   const mismatched = painted
@@ -348,18 +367,27 @@ function StreamGrid({ channels, overlays, isActive }: { channels: ChannelInfo[];
   const shownKey = useClockSelector(playback.clock, (time) =>
     isActive ? ids.map((id) => latestKey(state.latestAtOrBefore(id, nanosecondsAt(zero, time)))).join(',') : '',
   )
+  // 各路播放头所在的帧号 (按帧时刻表): 暂停时步进到还没取来的帧, 所显示的样本不变, 需求窗口也要随之移过去
+  const frameKey = useClockSelector(playback.clock, (time) =>
+    isActive && !isLive
+      ? channels
+          .map((channel) => (channel.frames ? latestIndexAtOrBefore(frameTimesOn(channel.frames, axis), nanosecondsAt(zero, time)) : ''))
+          .join(',')
+      : '',
+  )
 
   useEffect(() => {
     if (!isActive) {
       state.setDemand(panelId, null)
       return
     }
-    const start = nanosecondsAt(zero, playback.clock.getTime())
-    const end = playback.isPlaying ? start + PREFETCH_NANOSECONDS : start
-    state.setDemand(panelId, { channels: ids, range: { start, end } })
+    const time = nanosecondsAt(zero, playback.clock.getTime())
+    const end = playback.isPlaying ? time + PREFETCH_NANOSECONDS : time
+    // 视频要从关键帧解起, 起点前移到各视频通道播放头前最近的关键帧
+    state.setDemand(panelId, { channels: ids, range: { start: isLive ? time : demandStartOf(channels, axis, time), end } })
     // 实时只说明要看哪些通道, 不随每帧更新窗口
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state, zero, panelId, ids, isActive, axis, playback.isPlaying, playback.clock, isLive ? null : shownKey])
+  }, [state, zero, panelId, ids, channels, isActive, axis, playback.isPlaying, playback.clock, isLive ? null : shownKey, frameKey])
   useEffect(() => () => state.setDemand(panelId, null), [state, panelId])
 
   const time = isLive ? (state.latestReceiveTime() ?? 0n) : nanosecondsAt(zero, playback.clock.getTime())
@@ -370,21 +398,26 @@ function StreamGrid({ channels, overlays, isActive }: { channels: ChannelInfo[];
         const index = frameTimes ? latestIndexAtOrBefore(frameTimes, time) : -1
         const isCovered = isLive || state.coveredRanges(channel.id).some((range) => range.start <= time && time <= range.end)
         const hasFrame = frameTimes ? index >= 0 : true
-        const sample = hasFrame && (isCovered || playback.isPlaying) ? state.latestAtOrBefore(channel.id, time) : null
+        const sample = hasFrame && (isCovered || playback.isPlaying) ? (state.latestAtOrBefore(channel.id, time) as Sample<ImagePayload> | null) : null
+        // 视频要从关键帧解起: 关键帧那段未到时不画, 同未覆盖
+        const isVideo = sample !== null && isVideoFormat(sample.payload.format)
+        const videoPlan = isVideo ? samplesToDecode(state, channel.id, sample) : null
+        const payload = isVideo && !videoPlan ? undefined : sample?.payload
         const error = state.errorOf(channel.id)
         const placeholder = error
           ? `取帧失败: ${error.message}`
           : !hasFrame
             ? '此刻之前无帧'
             : isLive
-              ? '等待数据'
+              ? isVideo ? '等待关键帧' : '等待数据'
               : '加载中'
         const sampleTime = sample?.sampleTime ?? null
         return (
           <StreamFigure
             key={channel.id}
             channel={channel}
-            payload={sample?.payload as ImagePayload | undefined}
+            payload={payload}
+            videoPlan={videoPlan}
             isActive={isActive}
             placeholder={placeholder}
             frameIndex={index}

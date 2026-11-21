@@ -3,8 +3,8 @@
 rosz 的共享可视化 UI 包: 数据源状态, 播放时钟与回放 / 实时查看面板, 供 ADP, erban-caring webapp 与 rosz 查看器共用. 从 ADP 回放 (`frontend/src/replay`, `views`) 抽取, ADP 牵头开发.
 
 - 接缝在包内的前端状态: 适配器 (ADP, webapp, 查看器) 写通道目录与样本, 订阅状态发出的需求窗口; 面板只读状态与播放时钟. 状态, 时钟为纯 TS 对象, React 侧只有 Provider, 钩子与面板
-- 首批组件: 视图组装 (可拖拽的布局系统) 与播放控件, 图像面板 (彩色, 深度伪彩色, 2D 叠加), 序列泳道 (uplot), 事件轨, 3D 场景, 消息树, 通道列表
-- 解码在渲染时做: JPEG / PNG 由浏览器解 (支持 WebCodecs `ImageDecoder` 时用它, 否则 `createImageBitmap`), 深度 (`16UC1; zstd`, `16UC1; compressedDepth`) 与 CDR 用 rosz 核心库 WASM (`@erban-robotics/rosz-wasm`), 深度经 WebGL2 R16UI 纹理上 turbo 伪彩色, 悬停读毫米值. 未显示的面板不解码
+- 首批组件: 视图组装 (可拖拽的布局系统) 与播放控件, 图像面板 (彩色, 视频, 深度伪彩色, 2D 叠加), 序列泳道 (uplot), 事件轨, 3D 场景, 消息树, 通道列表
+- 解码在渲染时做: JPEG / PNG 由浏览器解 (支持 WebCodecs `ImageDecoder` 时用它, 否则 `createImageBitmap`), 深度 (`16UC1; zstd`, `16UC1; compressedDepth`) 与 CDR 用 rosz 核心库 WASM (`@erban-robotics/rosz-wasm`), 深度经 WebGL2 R16UI 纹理上 turbo 伪彩色 (固定量程 200-2000 mm, 逐帧归一化会闪烁), 悬停读毫米值. 未显示的面板不解码
 
 ## 安装
 
@@ -36,6 +36,12 @@ peer 依赖: `react` `react-dom` 19, `three` 0.185, `@react-three/fiber` 9.
    optimizeDeps: { exclude: ['@erban-robotics/rosz-wasm'] }
    ```
 
+   vitest 测到本包面板时, 本包以 `?url` 引 `.wasm` (Vite 的写法), 要交给 Vite 转换, 不让 node 原样加载:
+
+   ```ts
+   test: { server: { deps: { inline: ['@erban-robotics/rosz-ui'] } } }
+   ```
+
 3. 应用骨架挂一个 `<HintProvider>` (面板里的悬停提示须在其内)
 
 ### 开发期指向本地源码
@@ -44,7 +50,12 @@ ADP 牵头改 UI 时, 用环境变量让 vite alias 指向本机 `~/projects/ros
 
 ```ts
 // vite.config.ts
+import { readFileSync } from 'fs'
 const roszUi = process.env.ROSZ_UI_SRC // 如 ~/projects/rosz-ui/src
+// 源码目录不在应用仓库下, 源码里的裸import往上找不到应用的node_modules: 本包的依赖 (随发版包装进应用) 一律从应用解析
+const roszUiDependencies = roszUi
+  ? Object.keys(JSON.parse(readFileSync(`${roszUi}/../package.json`, 'utf8')).dependencies ?? {})
+  : []
 export default defineConfig({
   resolve: {
     alias: roszUi
@@ -53,14 +64,14 @@ export default defineConfig({
           { find: /^@erban-robotics\/rosz-ui\/(.*\.css)$/, replacement: `${roszUi}/$1` },
         ]
       : [],
-    // 源码里的import从本仓库的node_modules解析, peer依赖须与应用用同一份, 否则React出两份, 钩子失效
-    dedupe: ['react', 'react-dom', 'three', '@react-three/fiber'],
+    // peer依赖须与应用用同一份, 否则React出两份, 钩子失效
+    dedupe: ['react', 'react-dom', 'three', '@react-three/fiber', ...roszUiDependencies],
   },
   server: { fs: { allow: roszUi ? ['.', roszUi] : ['.'] } },
 })
 ```
 
-本地源码下的 `rosz-ui.css` 同样带 `@source "./"`, Tailwind 扫的是源码目录. 本包的依赖要在本仓库 `npm install` 过.
+本地源码下的 `rosz-ui.css` 同样带 `@source "./"`, Tailwind 扫的是源码目录. 源码目录不必 `npm install`, 本包依赖由应用里装的发版包带进; 源码新加依赖时应用要先另装上.
 
 ## 数据源接口
 
@@ -81,6 +92,7 @@ const playback = useLivePlayback(dataSource)
 
 - 通道目录 (`ChannelInfo`, 见 `src/data-source/types.ts`): 从数据源解析后 `setCatalog` (离线一次给全) 或 `upsertChannels` / `removeChannels` (实时话题上下线). 六种通道 `image` `series` `events` `spatial` `overlay` `message`; 离线图像给帧时刻表 `frames`, 离线通道给首末时刻 `range` (时间轴总长与步进按它们算); 实时 transient_local 话题标 `isStatic`, 解不了的类型给 `undecodable` 原因. 频率由状态按样本统计 (`stats`), 适配器不报
 - 样本 (`Sample`: 接收时刻, 可选采样时刻, 内容): 离线按段 `write` (段内样本到齐, 此后该段算已覆盖) 或一次写全 `writeStatic` (不淘汰); 实时 `append`. 内容按通道种类: 图像为 `ImagePayload` (压缩字节 + `format`), 结构化消息为 `MessagePayload` (原始 CDR), 序列为 `{ times, columns }`, 事件为 `QualityCheckEvent` / `TaskEvent`, 叠加与空间为各自的一帧 (见 `image-overlay.ts`, `spatial-layers.ts`)
+- 视频图像 (`format`为`h264` / `av1`, 即`foxglove_msgs/CompressedVideo.format`的写法): 一条样本一帧, 不重复写同一帧 (同步帧表里一条消息占多个帧号时也只写一条). H.264为Annex B, 每个关键帧前带SPS/PPS, 无B帧; AV1为一个时间单元的OBU序列, 关键帧含Sequence Header. 每条给`isKeyframe`; 离线通道的`frames.keyframeIndices`给关键帧帧号 (升序, 如ADP由回放MCAP文件尾`video_keyframes` Metadata的log_time换算). 图像面板据此把需求窗口起点前移到播放头前最近的关键帧, 适配器照常取窗口内样本加起点前一条, 不必特殊处理. 关键帧到播放头之间须连续覆盖才解, 否则显示加载中; 解码用WebCodecs `VideoDecoder`, 每路一个, 顺序播放增量喂, 跳转与不连续时从关键帧重解
 - 需求窗口: `onDemandChange` 订阅, `demandWindows()` 读 `{ 通道集合, 时间范围, 分辨率提示 }`, 把缺的取来写入 (含窗口起点前最近一条); 取失败 `reportError`. 实时适配器据此决定订阅哪些话题
 - 不连续: 实时重连或丢帧时 `markDiscontinuity()`; 回放的跳转, 步进, 循环回绕与切轴由包内记
 
@@ -101,7 +113,7 @@ ADP `frontend/src/replay` 与 `views` 中搬进本包的模块改从本包导入
 | 事件按通道名分质检与任务 | 事件通道 `type` 为 `quality` 或 `task`; 事件的 `layerKey` 改名 `channel` |
 | 叠加 / 空间的说明在 `model.overlays` / `model.spatialLayers` | 在通道目录: `type` 为细分种类, `properties` 给 `stream` `width` `height` / `frame` `childFrame`, 无法识别的给 `issue`; 内容 JSON 用 `parseOverlayContent` / `parseSpatialContent` 解析 |
 | `model.duration` `stepTimes` 与 `axisTimeline(frameGroups, ...)` | 由目录的 `frames` (同步帧表给 `group` 与 `isSynchronized`) 与 `range` 算 |
-| 图像样本 `{ format: 'jpeg', data: Blob }` | 同, `data` 也可为 `Uint8Array`; 支持深度格式 |
+| 图像样本 `{ format: 'jpeg', data: Blob }` | 同, `data` 也可为 `Uint8Array`; 支持深度格式与视频 (`h264` `av1`, 带`isKeyframe`) |
 | `useUiStore` 的 `localLayouts` | `useLayoutStore` (存储键不同, 本地调整需重做一次) |
 | `usePlaybackStore` 在 `ui-store.ts` | 从本包导入; 测试里复位用 `usePlaybackStore.setState(usePlaybackStore.getInitialState())` |
 | `createDataSourceState(axis)` | `createDataSourceState({ mode, axis })` |
@@ -118,7 +130,7 @@ npm run build        # dist/: ESM + 类型声明 + css
 npm run dev          # playground, http://localhost:5173
 ```
 
-playground (`playground/`, 不进包) 回放 `capture.py` 录下的真实话题: `ROSZ_ROUTER=tcp/<orin>:7447 python playground/capture.py playground/captures/head 6` (需装 rosz wheel 与 zstandard; 录制不入库). 查询参数见 `playground/main.tsx` 开头: `mode=offline` 走离线回放, `copies=3` 把彩色复制成多路测 CPU, `depth=zstd|png` 只放一种深度. 页面上 `await probeDepth()` 解各深度首帧, 与录制时 Python `depth()` 的毫米值对照.
+playground (`playground/`, 不进包) 回放 `capture.py` 录下的真实话题: `ROSZ_ROUTER=tcp/<orin>:7447 python playground/capture.py playground/captures/head 6` (需装 rosz wheel 与 zstandard; 录制不入库). 查询参数见 `playground/main.tsx` 开头: `mode=offline` 走离线回放, `copies=3` 把彩色复制成多路测 CPU, `depth=zstd|png` 只放一种深度. 页面上 `await probeDepth()` 解各深度首帧, 与录制时 Python `depth()` 的毫米值对照. 视频: `node playground/encode-video.mjs`用ffmpeg (libx264, libsvtav1) 造H.264与AV1各一路到`playground/captures/video`, 打开`?capture=video&mode=offline`, 页面上`await compareVideo('/video/h264', 帧号)`把画面与ffmpeg解出的同帧PNG逐像素比 (同帧RGB平均差约0.5, 相邻帧6以上); 播放头经`playbackStore.getState().seek(秒)`跳.
 
 ## 发版
 

@@ -41,6 +41,8 @@ export type ChannelFrames = {
   // 同一帧时间表的一组 (同帧号即同一采样时刻); 步进按有同步帧表的组, 没有则按帧最多的一路
   group?: string
   isSynchronized?: boolean
+  // 视频通道的关键帧帧号 (升序; 同步帧表里一条消息占多个帧号时取首个). 有它即视频通道: 面板据此把需求窗口起点前移到关键帧
+  keyframeIndices?: number[]
 }
 
 /**
@@ -81,9 +83,11 @@ export type ChannelStats = { count: number; frequency: number | null }
 
 /**
  * 图像通道的样本内容: 原样的压缩字节与格式, 渲染时才解.
- * `format`即`sensor_msgs/CompressedImage.format`的写法: `jpeg` `png` 彩色; `16UC1; zstd` `16UC1; compressedDepth` 深度
+ * `format`即`sensor_msgs/CompressedImage.format`的写法: `jpeg` `png` 彩色; `16UC1; zstd` `16UC1; compressedDepth` 深度;
+ * 或`foxglove_msgs/CompressedVideo.format`的写法: `h264` (Annex B, 关键帧带SPS/PPS) `av1` (一个时间单元的OBU, 关键帧以Sequence Header开头).
+ * 视频一条样本一帧, 须给`isKeyframe`; 解码要从关键帧按序喂, 见`video-decoder.ts`
  */
-export type ImagePayload = { format: string; data: Blob | Uint8Array }
+export type ImagePayload = { format: string; data: Blob | Uint8Array; isKeyframe?: boolean }
 
 // 结构化消息通道的样本内容: 原始CDR (含4字节封装头), 渲染时按通道的`type`解码
 export type MessagePayload = { encoding: 'cdr'; data: Uint8Array }

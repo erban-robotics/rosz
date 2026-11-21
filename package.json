@@ -1,16 +1,27 @@
 {
   "name": "@erban-robotics/rosz-ui",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "rosz 共享可视化 UI 包: 数据源状态, 播放时钟与回放 / 实时查看面板",
   "license": "MIT",
-  "repository": { "type": "git", "url": "https://github.com/erban-robotics/rosz-ui" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/erban-robotics/rosz-ui"
+  },
   "type": "module",
-  "sideEffects": ["*.css"],
-  "files": ["dist", "README.md"],
+  "sideEffects": [
+    "*.css"
+  ],
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
     "./rosz-ui.css": "./dist/rosz-ui.css",
     "./theme.css": "./dist/theme.css"
   },

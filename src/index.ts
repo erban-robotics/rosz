@@ -65,6 +65,7 @@ export { axisTimeline } from './views/axis-timeline'
 // 面板与其数据形状
 export { ImageView } from './image/ImageView'
 export { decodeImage, type DecodedFrame, isDepthFormat } from './image/decode'
+export { isVideoFormat } from './image/video-keyframes'
 export {
   type ImageOverlay,
   isOverlayKind,
