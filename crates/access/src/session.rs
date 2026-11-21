@@ -131,7 +131,12 @@ impl Session {
         let publishers = self.inner.publishers.lock().unwrap();
         let mut by_topic: HashMap<&str, (PublisherToken, usize)> = HashMap::new();
         for token in publishers.values() {
-            by_topic.entry(&token.topic).or_insert_with(|| (token.clone(), 0)).1 += 1;
+            let entry = by_topic.entry(&token.topic).or_insert_with(|| (token.clone(), 0));
+            entry.1 += 1;
+            // 发布端 durability 不一时以 transient_local 的为代表: 订阅时取得到它缓存的历史, 话题也标静态
+            if token.transient_local && !entry.0.transient_local {
+                entry.0 = token.clone();
+            }
         }
         let mut out: Vec<_> = by_topic
             .into_values()

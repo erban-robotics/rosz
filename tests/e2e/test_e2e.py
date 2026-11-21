@@ -83,6 +83,12 @@ def test_expected_failures_are_return_values(rz):
 # ---------------- CLI ----------------
 
 
+def test_cli_static_when_any_publisher_is_transient_local():
+    topics = {t["name"]: t for t in json.loads(cli("topics", "--json").stdout)["topics"]}
+    latched = json.loads(cli("echo", "/mixed_durability", "-n", "1", "--timeout", "3", "--json").stdout)
+    assert (topics["/mixed_durability"]["transient_local"], latched.get("value")) == (True, {"data": "latched"})
+
+
 def test_cli_echo_matches_rclpy():
     wrong = []
     for topic in ["/joint_states", "/tf", "/tf_static", "/hand/pressure", COLOR]:
