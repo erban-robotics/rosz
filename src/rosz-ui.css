@@ -1,0 +1,168 @@
+/* rosz-ui 组件样式: 在应用的 Tailwind 入口里 `@import "@erban-robotics/rosz-ui/rosz-ui.css";`.
+   @source 让 Tailwind 扫描本包的组件类名 (发版包里为 dist/, 开发期 alias 到源码时为 src/).
+   用到的颜色 token (surface-*, foreground-*, line*, status-*, series-*, primary 等) 由应用提供, 没有的引入 theme.css */
+@source "./";
+
+@layer components {
+  /* 可展开: 箭头随data-open旋转 */
+  .expand-chevron {
+    transition: transform 120ms var(--ease-standard-curve);
+  }
+  .expand-chevron[data-open='true'],
+  [data-open='true'] > .expand-chevron {
+    transform: rotate(90deg);
+  }
+  /* 按钮按下微缩 */
+  .press {
+    transition:
+      transform 140ms var(--ease-standard-curve),
+      background-color 120ms ease,
+      color 120ms ease;
+  }
+  .press:active:not(:disabled) {
+    transform: scale(0.97);
+  }
+}
+
+/* ---------- 视图区 (react-resizable-panels的Workspace) ---------- */
+/* Workspace不带样式, 按它的data属性写: 面板间2px暗缝, tabset与内容同为surface-1;
+   tab头平面胶囊, 选中胶囊surface-2, 人最近操作的tabset里的选中胶囊混主色; 拖放提示用primary */
+@layer components {
+  .view-workspace {
+    height: 100%;
+    width: 100%;
+    background: var(--gutter);
+  }
+  .view-workspace [data-tabset] {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    min-width: 0;
+    overflow: hidden;
+    background: var(--surface-1);
+  }
+  .view-workspace [data-tabset-header] {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    height: 30px;
+    padding: 0 4px;
+    background: var(--surface-1);
+    border-bottom: 1px solid var(--line);
+    font-size: 12px;
+    font-weight: var(--small-text-weight);
+  }
+  .view-workspace [data-tab-list] {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .view-workspace [data-tab] {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 4px;
+    height: 22px;
+    max-width: 200px;
+    margin: 0 1px;
+    padding: 0 4px 0 10px;
+    border-radius: calc(var(--radius) * 1.4);
+    color: var(--foreground-tertiary);
+    cursor: default;
+    user-select: none;
+    outline: none;
+  }
+  .view-workspace [data-tab]:hover {
+    color: var(--foreground-secondary);
+  }
+  .view-workspace [data-tab]:focus-visible {
+    box-shadow: inset 0 0 0 1px var(--ring);
+  }
+  .view-workspace [data-tab][data-tab-selected] {
+    background: var(--surface-2);
+    color: var(--foreground);
+  }
+  /* 人最近操作的tabset里的当前tab: 胶囊混主色 */
+  .view-workspace [data-tabset-active] [data-tab][data-tab-selected] {
+    background: color-mix(in oklch, var(--primary) 22%, var(--surface-2));
+  }
+  .view-workspace [data-tab][data-tab-dragging] {
+    opacity: 0.5;
+  }
+  /* tab列表里的插入位置 */
+  .view-workspace [data-tab][data-drop-before] {
+    box-shadow: inset 2px 0 0 var(--primary);
+  }
+  .view-workspace [data-tab][data-drop-after] {
+    box-shadow: inset -2px 0 0 var(--primary);
+  }
+  /* 关闭按钮只在悬停该tab时显出 */
+  .view-workspace .view-tab-close {
+    display: grid;
+    place-items: center;
+    width: 16px;
+    height: 16px;
+    border-radius: var(--radius-sm);
+    color: var(--foreground-tertiary);
+    opacity: 0;
+  }
+  .view-workspace [data-tab]:hover .view-tab-close,
+  .view-workspace .view-tab-close:focus-visible {
+    opacity: 1;
+  }
+  .view-workspace .view-tab-close:hover {
+    background: var(--surface-hover);
+    color: var(--foreground);
+  }
+  .view-workspace [data-tab-panels] {
+    flex: 1;
+    min-height: 0;
+  }
+  /* 拖到tabset上方时的停靠区域 (中央并入, 四边分屏); 换区直接跳到位, 只淡入淡出 */
+  .view-workspace [data-drop-indicator] {
+    border: 1px solid var(--primary);
+    border-radius: var(--radius-md);
+    background: var(--primary-soft);
+    transition: opacity 100ms var(--ease-standard-curve);
+  }
+  /* 分割线即面板间的2px暗缝, 两侧各留3px可拖热区; 悬停与拖动时变主色 */
+  .view-workspace .view-separator {
+    position: relative;
+    flex-shrink: 0;
+    background: var(--gutter);
+    outline: none;
+    transition: background-color 150ms var(--ease-standard-curve);
+  }
+  .view-workspace .view-separator[data-split-orientation="horizontal"] {
+    width: 2px;
+  }
+  .view-workspace .view-separator[data-split-orientation="vertical"] {
+    height: 2px;
+  }
+  .view-workspace .view-separator::after {
+    content: "";
+    position: absolute;
+    inset: 0 -3px;
+  }
+  .view-workspace .view-separator[data-split-orientation="vertical"]::after {
+    inset: -3px 0;
+  }
+  .view-workspace .view-separator:is([data-separator="hover"], [data-separator="active"], [data-separator="focus"]) {
+    background: var(--primary);
+  }
+}
+/* 拖动中跟随指针的tab标签, 渲染在Workspace根之外; 属浮层, 带投影 */
+[data-drag-preview] {
+  padding: 2px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--foreground);
+  font-size: 12px;
+  font-weight: var(--small-text-weight);
+  box-shadow: var(--floating-shadow);
+}
+
