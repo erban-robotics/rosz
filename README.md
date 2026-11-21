@@ -36,6 +36,12 @@ peer 依赖: `react` `react-dom` 19, `three` 0.185, `@react-three/fiber` 9.
    optimizeDeps: { exclude: ['@erban-robotics/rosz-wasm'] }
    ```
 
+   vitest 测到本包面板时, 本包以 `?url` 引 `.wasm` (Vite 的写法), 要交给 Vite 转换, 不让 node 原样加载:
+
+   ```ts
+   test: { server: { deps: { inline: ['@erban-robotics/rosz-ui'] } } }
+   ```
+
 3. 应用骨架挂一个 `<HintProvider>` (面板里的悬停提示须在其内)
 
 ### 开发期指向本地源码
@@ -44,7 +50,12 @@ ADP 牵头改 UI 时, 用环境变量让 vite alias 指向本机 `~/projects/ros
 
 ```ts
 // vite.config.ts
+import { readFileSync } from 'fs'
 const roszUi = process.env.ROSZ_UI_SRC // 如 ~/projects/rosz-ui/src
+// 源码目录不在应用仓库下, 源码里的裸import往上找不到应用的node_modules: 本包的依赖 (随发版包装进应用) 一律从应用解析
+const roszUiDependencies = roszUi
+  ? Object.keys(JSON.parse(readFileSync(`${roszUi}/../package.json`, 'utf8')).dependencies ?? {})
+  : []
 export default defineConfig({
   resolve: {
     alias: roszUi
@@ -53,14 +64,14 @@ export default defineConfig({
           { find: /^@erban-robotics\/rosz-ui\/(.*\.css)$/, replacement: `${roszUi}/$1` },
         ]
       : [],
-    // 源码里的import从本仓库的node_modules解析, peer依赖须与应用用同一份, 否则React出两份, 钩子失效
-    dedupe: ['react', 'react-dom', 'three', '@react-three/fiber'],
+    // peer依赖须与应用用同一份, 否则React出两份, 钩子失效
+    dedupe: ['react', 'react-dom', 'three', '@react-three/fiber', ...roszUiDependencies],
   },
   server: { fs: { allow: roszUi ? ['.', roszUi] : ['.'] } },
 })
 ```
 
-本地源码下的 `rosz-ui.css` 同样带 `@source "./"`, Tailwind 扫的是源码目录. 本包的依赖要在本仓库 `npm install` 过.
+本地源码下的 `rosz-ui.css` 同样带 `@source "./"`, Tailwind 扫的是源码目录. 源码目录不必 `npm install`, 本包依赖由应用里装的发版包带进; 源码新加依赖时应用要先另装上.
 
 ## 数据源接口
 
