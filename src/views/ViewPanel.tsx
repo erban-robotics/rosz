@@ -1,72 +1,30 @@
-import { lazy, type ReactNode, Suspense, useMemo } from 'react'
+import { type ReactNode, useMemo } from 'react'
 import { useParentTabState } from 'react-resizable-panels'
-import { useAxis, useCatalog, useChannelPayloads, useChannels, useDataSource, useDiscontinuity } from '../data-source/react'
-import { WHOLE_TIMELINE } from '../data-source/time-axis'
+import { useCatalog, useChannelPayloads, useDataSource } from '../data-source/react'
 import type { ChannelInfo } from '../data-source/types'
 import { MessageView } from '../message/MessageView'
-import { type DrawableSpatialLayer, isSpatialKind, type SpatialLayer } from '../scene3d/spatial-layers'
-import { isEndEffectorTrack, speedLanes, tcpTracks } from '../timeline/end-effector'
+import { Scene3dView as Scene3dPanel } from '../scene3d/Scene3dView'
+import { isEndEffectorTrack, speedLanes } from '../timeline/end-effector'
 import type { QualityCheckEvent, TaskEvent } from '../timeline/events'
 import { buildJointGroups } from '../timeline/joint-lanes'
-import type { SeriesTrack } from '../timeline/series'
 import { formatSeconds } from '../timeline/timeline'
 import { TimelinePanel } from '../timeline/TimelinePanel'
-import { OptionSelect } from '../ui/OptionSelect'
+import { useTracks } from '../timeline/use-tracks'
 import { usePlaybackStore } from '../playback/store'
 import type { ViewSpec } from './catalog'
 import { ImageView } from '../image/ImageView'
 import { describeBinding, resolveBindings, viewTitle, visibleChannels } from './layout-model'
 import { useViewComposition } from './view-context'
 import { Hint } from '../ui/Hint'
-
-// three.js与r3f体积大, 3D场景单独分块按需加载
-const Scene3d = lazy(() => import('../scene3d/Scene3d').then((module) => ({ default: module.Scene3d })))
+import { OnAxisOrEmpty } from './OnAxisOrEmpty'
 
 function ofKind(channels: ChannelInfo[], kind: ChannelInfo['kind']) {
   return channels.filter((channel) => channel.kind === kind)
 }
 
-// 绑定的序列: 从状态的序列通道读, 每条样本一段列, 配上通道说明; 采样轴上为空 (序列只有接收时刻)
-function useTracks(channels: ChannelInfo[]): SeriesTrack[] {
-  const { state } = useDataSource()
-  const series = useMemo(() => ofKind(channels, 'series'), [channels])
-  const ids = useMemo(() => series.map((channel) => channel.id), [series])
-  useChannels(state, ids)
-  const versions = ids.map((id) => state.version(id)).join(',')
-  return useMemo(
-    () =>
-      series.flatMap((channel) =>
-        state
-          .samplesIn(channel.id, WHOLE_TIMELINE)
-          .map((sample) => ({ channel, ...(sample.payload as Omit<SeriesTrack, 'channel'>) })),
-      ),
-    // versions变即序列通道数据变了 (含切轴), 须重取
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [series, state, versions],
-  )
-}
-
-/**
- * 采样时间轴上没有可画的数据时显示空状态, 否则画`children`.
- * 没有采样时刻的样本 (如ADP的序列, 事件, 空间) 在采样轴上不存在.
- */
-function OnAxisOrEmpty({ hasData, children }: { hasData: boolean; children: ReactNode }) {
-  const { state } = useDataSource()
-  const axis = useAxis(state)
-  if (axis !== 'sample' || hasData) return children
-  return (
-    <p role="status" className="grid h-full place-items-center p-4 text-sm text-muted-foreground">
-      采样时间轴上无数据: 该视图的通道只有接收时刻
-    </p>
-  )
-}
-
 type Scene3dView = Extract<ViewSpec, { type: 'scene3d' }>
 
-/**
- * 3D场景: 只画在基座标系里的轨迹与空间图层, 其余标出未画 (不按坐标变换换算). 基座标系取视图的`frame`, 没给取首个声明了坐标系的图层;
- * 没声明坐标系的轨迹照画, 内容无法识别的空间图层标出. 基座标系与同步视角的切换经`updateView`存本地.
- */
+// 3D场景: 基座标系与同步视角的切换经`updateView`存本地
 function Scene3dContent({
   viewId,
   view,
@@ -79,118 +37,16 @@ function Scene3dContent({
   isActive: boolean
 }) {
   const { playback, updateView } = useViewComposition()
-  const { state } = useDataSource()
-  const discontinuity = useDiscontinuity(state)
-  const tracks = useTracks(channels)
-  const spatialChannels = useMemo(() => ofKind(channels, 'spatial'), [channels])
-  // 只为订阅: 空间通道数据一变 (含切轴) 即换新数组, 下面据此重取
-  const spatialSamples = useChannelPayloads(
-    state,
-    spatialChannels.map((channel) => channel.id),
-  )
-  // 空间图层的说明 (种类, 名字, 坐标系) 取自通道目录, 样本取自状态; 采样轴上没有样本的不画
-  const spatialLayers = useMemo(
-    () =>
-      spatialChannels.flatMap((channel): SpatialLayer[] => {
-        const base = { channel: channel.id, name: channel.name }
-        const properties = (channel.properties ?? {}) as { frame?: string; childFrame?: string }
-        const issue =
-          channel.issue ??
-          (!isSpatialKind(channel.type) ? `未知的空间种类${channel.type ?? ''}` : !properties.frame ? '没有给坐标系' : null)
-        if (issue) return [{ ...base, kind: 'invalid', frame: '', issue }]
-        const samples = state.samplesIn(channel.id, WHOLE_TIMELINE).map((sample) => sample.payload)
-        if (samples.length === 0) return []
-        return [
-          { ...base, kind: channel.type, frame: properties.frame, childFrame: properties.childFrame ?? '', samples } as SpatialLayer,
-        ]
-      }),
-    // spatialSamples变即空间通道数据变了, 须重取
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [spatialChannels, state, spatialSamples],
-  )
-  const sceneTracks = useMemo(() => tcpTracks(tracks.filter(isEndEffectorTrack)), [tracks])
-  const frames = useMemo(
-    () => {
-      const spatialFrames = spatialLayers.flatMap((spatial) => (spatial.kind === 'invalid' ? [] : [spatial.frame]))
-      const declared = [view.frame, ...sceneTracks.map((track) => track.frame), ...spatialFrames]
-      return [...new Set(declared.filter((frame) => frame != null))]
-    },
-    [view.frame, sceneTracks, spatialLayers],
-  )
-  const baseFrame = view.frame ?? frames[0] ?? null
-  const drawnTracks = useMemo(
-    () => sceneTracks.filter((track) => track.frame === null || baseFrame === null || track.frame === baseFrame),
-    [sceneTracks, baseFrame],
-  )
-  const skippedTracks = sceneTracks.filter((track) => !drawnTracks.includes(track))
-  const drawnSpatialLayers = useMemo(
-    () =>
-      spatialLayers.filter(
-        (spatial): spatial is DrawableSpatialLayer =>
-          spatial.kind !== 'invalid' && (baseFrame === null || spatial.frame === baseFrame),
-      ),
-    [spatialLayers, baseFrame],
-  )
-  const skippedNotes = [
-    ...skippedTracks.map((track) => `${track.label}在坐标系${track.frame}`),
-    ...spatialLayers.flatMap((spatial) =>
-      spatial.kind !== 'invalid' && !drawnSpatialLayers.includes(spatial) ? [`${spatial.name}在坐标系${spatial.frame}`] : [],
-    ),
-  ]
-  const invalidSpatialLayers = spatialLayers.filter((spatial) => spatial.kind === 'invalid')
-  const isSynced = view.syncCamera ?? false
   return (
-    <OnAxisOrEmpty hasData={sceneTracks.length > 0 || drawnSpatialLayers.length > 0}>
-      <div className="flex h-full min-h-0 flex-col gap-1">
-        <div className="flex shrink-0 flex-wrap items-center gap-2 px-1 text-xs">
-          {frames.length > 0 && (
-            <div className="flex items-center gap-1 text-foreground-secondary">
-              基座标系
-              <OptionSelect
-                aria-label="基座标系"
-                size="sm"
-                className="h-6! px-1.5 font-mono text-xs text-foreground"
-                value={baseFrame ?? ''}
-                onChange={(frame) => updateView(viewId, (current) => ({ ...current, frame }) as ViewSpec)}
-                options={frames.map((frame) => ({ value: frame, label: frame }))}
-              />
-            </div>
-          )}
-          <Hint text="与其他开了同步的3D场景共用视角">
-            <button
-              type="button"
-              aria-pressed={isSynced}
-              className={`press rounded-sm border px-1.5 py-0.5 ${isSynced ? 'border-line-strong text-foreground' : 'border-transparent text-foreground-tertiary'}`}
-              onClick={() => updateView(viewId, (current) => ({ ...current, syncCamera: !isSynced }) as ViewSpec)}
-            >
-              同步视角
-            </button>
-          </Hint>
-          {skippedNotes.length > 0 && (
-            <p role="status" className="text-foreground-tertiary">
-              {skippedNotes.join(', ')}, 与基座标系不符, 未画
-            </p>
-          )}
-          {invalidSpatialLayers.length > 0 && (
-            <p role="status" className="text-foreground-tertiary">
-              {invalidSpatialLayers.map((spatial) => spatial.name).join(', ')}的内容无法识别, 未画
-            </p>
-          )}
-        </div>
-        <div className="min-h-0 flex-1">
-          <Suspense fallback={<p className="text-sm text-muted-foreground">3D视图加载中</p>}>
-            <Scene3d
-              tracks={drawnTracks}
-              spatialLayers={drawnSpatialLayers}
-              clock={playback.clock}
-              discontinuity={discontinuity}
-              isActive={isActive}
-              syncCamera={isSynced}
-            />
-          </Suspense>
-        </div>
-      </div>
-    </OnAxisOrEmpty>
+    <Scene3dPanel
+      channels={channels}
+      clock={playback.clock}
+      isActive={isActive}
+      frame={view.frame}
+      onFrameChange={(frame) => updateView(viewId, (current) => ({ ...current, frame }) as ViewSpec)}
+      syncCamera={view.syncCamera ?? false}
+      onSyncCameraChange={(syncCamera) => updateView(viewId, (current) => ({ ...current, syncCamera }) as ViewSpec)}
+    />
   )
 }
 

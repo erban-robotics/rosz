@@ -114,10 +114,21 @@ const playback = useLivePlayback(dataSource)
 - 通道目录 (`ChannelInfo`, 见 `src/data-source/types.ts`): 从数据源解析后 `setCatalog` (离线一次给全) 或 `upsertChannels` / `removeChannels` (实时话题上下线). 六种通道 `image` `series` `events` `spatial` `overlay` `message`; 离线图像给帧时刻表 `frames`, 离线通道给首末时刻 `range` (时间轴总长与步进按它们算); 实时 transient_local 话题标 `isStatic`, 解不了的类型给 `undecodable` 原因. 频率由状态按样本统计 (`stats`), 适配器不报
 - 样本 (`Sample`: 接收时刻, 可选采样时刻, 内容): 离线按段 `write` (段内样本到齐, 此后该段算已覆盖) 或一次写全 `writeStatic` (不淘汰); 实时 `append`. 内容按通道种类: 图像为 `ImagePayload` (压缩字节 + `format`), 结构化消息为 `MessagePayload` (原始 CDR), 序列为 `{ times, columns }`, 事件为 `QualityCheckEvent` / `TaskEvent`, 叠加与空间为各自的一帧 (见 `image-overlay.ts`, `spatial-layers.ts`)
 - 视频图像 (`format`为`h264` / `av1`, 即`foxglove_msgs/CompressedVideo.format`的写法): 一条样本一帧, 不重复写同一帧 (同步帧表里一条消息占多个帧号时也只写一条). H.264为Annex B, 每个关键帧前带SPS/PPS, 无B帧; AV1为一个时间单元的OBU序列, 关键帧含Sequence Header. 每条给`isKeyframe`; 离线通道的`frames.keyframeIndices`给关键帧帧号 (升序, 如ADP由回放MCAP文件尾`video_keyframes` Metadata的log_time换算). 图像面板据此把需求窗口起点前移到播放头前最近的关键帧, 适配器照常取窗口内样本加起点前一条, 不必特殊处理. 关键帧到播放头之间须连续覆盖才解, 否则显示加载中; 解码用WebCodecs `VideoDecoder`, 每路一个, 顺序播放增量喂, 跳转与不连续时从关键帧重解
+- 空间通道 (3D 场景, 见 `src/scene3d/scene-layers.ts`): `type` 为细分种类 (`transform` `pose` `point_cloud` `keypoints_3d`) 时内容为 `spatial-layers.ts` 的各形状, 坐标系给在目录 `properties.frame` (坐标变换另给 `childFrame`); 也可用两种自带坐标系的通用形状: `TransformsSample` (一条多个坐标变换, 如 ROS 的 TFMessage) 与 `PackedPointCloudSample` (点为 Float32Array, 可带颜色与 `frame`). 实时话题可直接写原始 CDR (`MessagePayload`), `type` 为 ROS 类型 `tf2_msgs/msg/TFMessage` / `sensor_msgs/msg/PointCloud2` (`rosSpatialKind` 判断), 由场景渲染时用 rosz-wasm 解, 与结构化消息同一约定. 内容不带 `time` 时取样本在当前时间轴上的时刻. 大消息 (点云) 在目录标 `keepLatest`, 实时只留最新一条
 - 需求窗口: `onDemandChange` 订阅, `demandWindows()` 读 `{ 通道集合, 时间范围, 分辨率提示 }`, 把缺的取来写入 (含窗口起点前最近一条); 取失败 `reportError`. 实时适配器据此决定订阅哪些话题
 - 不连续: 实时重连或丢帧时 `markDiscontinuity()`; 回放的跳转, 步进, 循环回绕与切轴由包内记
 
-内存与淘汰由状态统一管: 离线丢掉远离各需求窗口的段, 实时保留播放头前 10 秒; 每通道至少留最新一条, 静态通道不淘汰.
+内存与淘汰由状态统一管: 离线丢掉远离各需求窗口的段, 实时保留播放头前 10 秒 (`keepLatest` 的通道只留最新一条, 频率照算); 每通道至少留最新一条, 静态通道不淘汰.
+
+### 3D 场景
+
+视图组装里的 `scene3d` 视图与单独用的 `Scene3dView` (须在 `DataSourceContext` 内, 如查看器的 3D 面板) 是同一个组件:
+
+- TF 树由目录里全部坐标变换通道合成 (不必绑进视图, 只画绑定的), 每个子坐标系取播放时刻当时或之前最近的一条含它的变换, 不插值. 位姿, 点云, 3D 关键点与末端轨迹按其坐标系经 TF 树换算到基座标系, 不在同一棵树上的不画并标出
+- 基座标系: 视图的 `frame` (或 `Scene3dView` 的 `frame`), 没给取人在下拉里选的, 再没有取坐标系最多的那棵树的根 (同样多取先声明的坐标系所在的树); 可为树里任一坐标系
+- 取景只在换了图层或基座标系后内容首次非空时做一次, 数据更新不复位视角, 右上角 "重新取景" 手动再取; 包围盒抽样计算 (每图层至多 64 条样本, 每帧至多 2000 点)
+- 实时数据源下视图为所画通道与全部坐标变换通道设需求窗口 (适配器据此订阅), 面板藏起时清掉; 离线不设, 由适配器照常写入
+- 每条内容只换算一次 (按内容对象缓存), 点云直接用 Float32Array 上屏; 拿不到 WebGL 或渲染出错只在视图内提示
 
 布局描述 (视图表 + 布局树) 的 schema 见 `src/views/catalog.ts`, 与 ADP 原有的兼容: 绑定的 `kind` 由通道种类得出 (叠加与空间按 `type` 细分, 见 `bindingKindOf`), `role` `derivative` `name` 分别对通道的 `role` `source` `name`. 本地布局调整存 localStorage 的 `rosz-ui.local-layouts`.
 

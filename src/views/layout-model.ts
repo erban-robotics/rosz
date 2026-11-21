@@ -5,7 +5,7 @@
 import type { HiddenTabBehavior, WorkspaceModelInput, WorkspaceNodeInput } from 'react-resizable-panels'
 import type { ChannelInfo } from '../data-source/types'
 import { isOverlayKind } from '../image/image-overlay'
-import { isSpatialKind } from '../scene3d/spatial-layers'
+import { spatialKindOf } from '../scene3d/scene-layers'
 import {
   LAYOUT_DESCRIPTION_VERSION,
   type LayerBinding,
@@ -23,7 +23,7 @@ export function hiddenTabBehaviorFor(type: ViewType | undefined): HiddenTabBehav
   return type === 'scene3d' || type === 'image' ? 'keep-mounted' : 'unmount'
 }
 
-// 通道的绑定种类: 由通道种类得出, 叠加与空间再按`type`细分 (同ADP图层种类); 认不出的细分为`other`
+// 通道的绑定种类: 由通道种类得出, 叠加与空间再按`type`细分 (同ADP图层种类; 空间也认ROS类型`TFMessage` `PointCloud2`); 认不出的细分为`other`
 export function bindingKindOf(channel: ChannelInfo): LayerBinding['kind'] {
   switch (channel.kind) {
     case 'image':
@@ -31,14 +31,14 @@ export function bindingKindOf(channel: ChannelInfo): LayerBinding['kind'] {
     case 'overlay':
       return isOverlayKind(channel.type) ? channel.type : 'other'
     case 'spatial':
-      return isSpatialKind(channel.type) ? channel.type : 'other'
+      return spatialKindOf(channel) ?? 'other'
     default:
       return channel.kind
   }
 }
 
 function isSpatialChannel(channel: ChannelInfo) {
-  return channel.kind === 'spatial' && isSpatialKind(channel.type)
+  return spatialKindOf(channel) !== null
 }
 
 const END_EFFECTOR_POSITION_ROLE = 'end_effector_position'

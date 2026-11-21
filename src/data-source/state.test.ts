@@ -96,3 +96,14 @@ test('实时模式保留播放头前10秒, 静态通道与每通道最新一条�
     state.latestReceiveTime(),
   ]).toEqual([1, 1, ['t20000000000'], 20_000_000_000n])
 })
+
+test('实时模式下标了keepLatest的通道只留最新一条, 频率照算', () => {
+  const state = createDataSourceState({ mode: 'live' })
+  state.upsertChannels([{ id: '/points', kind: 'spatial', name: '/points', keepLatest: true }])
+  // 10Hz, 共11条, 一条一条到
+  for (let index = 0; index <= 10; index += 1) state.append('/points', [sampleAt(BigInt(index * 100_000_000))])
+  expect([state.samplesIn('/points', { start: 0n, end: 2_000_000_000n }).length, state.stats('/points').frequency]).toEqual([
+    1,
+    10,
+  ])
+})

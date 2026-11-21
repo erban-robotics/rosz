@@ -51,7 +51,8 @@ export type ChannelFrames = {
  * `properties`为数据源给的附加说明, 面板按约定的键读:
  * - 序列: `columns` (列名, 按此顺序), `unit`, `side` (左右, 关节配对用), `trajectory` (`target`为目标轨迹), `frame` (坐标系)
  * - 叠加: `stream` (所基于的图像通道`name`), `width`, `height` (底图像素)
- * - 空间: `frame` (数据所在坐标系, 坐标变换为父坐标系), `childFrame` (坐标变换的子坐标系)
+ * - 空间: `frame` (数据所在坐标系, 坐标变换为父坐标系), `childFrame` (坐标变换的子坐标系); 样本自带坐标系的 (一条多个坐标变换,
+ *   打包点云, ROS消息) 不必给
  */
 export type ChannelInfo = {
   // 状态里的通道名, 写入与查询都用它
@@ -60,7 +61,8 @@ export type ChannelInfo = {
   // 显示名: 实时为话题名, ADP为图层名 (图像流名, 列组名)
   name: string
   // 数据类型: 实时为ROS类型名 (如`sensor_msgs/msg/CompressedImage`); 叠加与空间为细分种类 (`segmentation` `keypoints_2d`
-  // `transform` `pose` `point_cloud` `keypoints_3d`); 事件为`quality` (质检结果) 或`task` (任务阶段)
+  // `transform` `pose` `point_cloud` `keypoints_3d`), 空间也可为ROS类型 (`tf2_msgs/msg/TFMessage` `sensor_msgs/msg/PointCloud2`,
+  // 样本为原始CDR); 事件为`quality` (质检结果) 或`task` (任务阶段)
   type?: string | null
   // 角色 (如`end_effector_position` `camera` `depth`), 布局绑定按它选
   role?: string | null
@@ -68,6 +70,8 @@ export type ChannelInfo = {
   source?: string | null
   // transient_local话题: 当静态, 不淘汰, 通道列表标"静态"
   isStatic?: boolean
+  // 实时下只留最新一条 (大消息如点云, 一条可达数MB, 不按10秒保留); 频率照样按最近2秒收到的条数算
+  keepLatest?: boolean
   // 解不了的原因 (无定义, hash不符); 有即面板与通道列表变灰, 只显示名称与类型
   undecodable?: string | null
   // 内容无法识别的原因 (叠加, 空间), 面板据此提示未画

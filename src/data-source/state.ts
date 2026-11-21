@@ -36,7 +36,8 @@ function byReceiveTime(first: Sample, second: Sample) {
  * 面板读目录, 设需求窗口, 按通道订阅 (`subscribe`) 并查询.
  *
  * 模式由适配器声明: 离线按段写入 (`write` `writeStatic`); 实时持续追加 (`append`), 只有接收时刻轴,
- * 播放头为已收到的最大接收时刻 (`latestReceiveTime`), 保留其前10秒, 每通道至少留最新一条, 静态 (transient_local) 通道不淘汰.
+ * 播放头为已收到的最大接收时刻 (`latestReceiveTime`), 保留其前10秒, 每通道至少留最新一条, 静态 (transient_local) 通道不淘汰,
+ * 目录标了`keepLatest`的 (大消息如点云) 只留最新一条.
  *
  * 时间轴: 全局选接收时刻 (默认) 或采样时刻, 查询, 需求窗口与覆盖段都在所选轴上; 没有采样时刻的样本在采样轴上不存在.
  * 切轴清空窗口通道 (适配器按新轴重取), 静态通道保留.
@@ -51,6 +52,8 @@ export function createDataSourceState({ mode = 'offline', axis: initialAxis = 'r
   let catalogSnapshot: ChannelInfo[] = []
   const statsCache = new Map<string, { version: number; stats: ChannelStats }>()
   let latestReceive: bigint | null = null
+  // 只留最新一条的实时通道: 最近2秒收到的接收时刻, 频率按它算
+  const recentReceives = new Map<string, bigint[]>()
   const chunksByChannel = new Map<string, Chunk[]>()
   const staticChannels = new Set<string>()
   const errorByChannel = new Map<string, Error>()
@@ -162,15 +165,28 @@ export function createDataSourceState({ mode = 'offline', axis: initialAxis = 'r
   function computeStats(channel: string): ChannelStats {
     const samples = chunksOf(channel).flatMap((chunk) => chunk.samples)
     if (samples.length === 0) return { count: 0, frequency: null }
-    let last = samples[0].receiveTime
-    for (const sample of samples) if (sample.receiveTime > last) last = sample.receiveTime
+    const times = recentReceives.get(channel) ?? samples.map((sample) => sample.receiveTime)
+    let last = times[0]
+    for (const time of times) if (time > last) last = time
     const now = mode === 'live' && latestReceive !== null && latestReceive > last ? latestReceive : last
-    const recent = samples.filter((sample) => sample.receiveTime > now - FREQUENCY_WINDOW_NANOSECONDS)
+    const recent = times.filter((time) => time > now - FREQUENCY_WINDOW_NANOSECONDS)
     if (recent.length < 2) return { count: samples.length, frequency: null }
     let first = last
-    for (const sample of recent) if (sample.receiveTime < first) first = sample.receiveTime
+    for (const time of recent) if (time < first) first = time
     const span = Number(last - first) / 1e9
-    return { count: samples.length, frequency: recent.length >= 2 && span > 0 ? (recent.length - 1) / span : null }
+    return { count: samples.length, frequency: span > 0 ? (recent.length - 1) / span : null }
+  }
+
+  // 只留最新一条的实时通道: 记下接收时刻 (留最近2秒) 后只留最晚的一条
+  function keepLatestOnly(channel: string, chunk: Chunk, samples: Sample[]) {
+    const times = [...(recentReceives.get(channel) ?? []), ...samples.map((sample) => sample.receiveTime)]
+    const latest = chunk.samples.at(-1)!
+    recentReceives.set(
+      channel,
+      times.filter((time) => time > latest.receiveTime - FREQUENCY_WINDOW_NANOSECONDS),
+    )
+    chunk.samples = [latest]
+    chunk.range = { start: latest.receiveTime, end: latest.receiveTime }
   }
 
   function notifyAll() {
@@ -240,7 +256,7 @@ export function createDataSourceState({ mode = 'offline', axis: initialAxis = 'r
       return latestReceive
     },
 
-    // 实时追加: 样本接到该通道之后 (乱序到达的按接收时刻插入), 随即按保留时长淘汰
+    // 实时追加: 样本接到该通道之后 (乱序到达的按接收时刻插入), 随即按保留时长淘汰 (`keepLatest`的通道只留最新一条)
     append(channel: string, samples: Sample[]) {
       if (samples.length === 0) return
       noteReceived(samples)
@@ -261,7 +277,8 @@ export function createDataSourceState({ mode = 'offline', axis: initialAxis = 'r
         start: chunk.samples[0].receiveTime,
         end: chunk.range.end > samples.at(-1)!.receiveTime ? chunk.range.end : chunk.samples.at(-1)!.receiveTime,
       }
-      evictLive(channel, chunk)
+      if (mode === 'live' && catalog.get(channel)?.keepLatest) keepLatestOnly(channel, chunk, samples)
+      else evictLive(channel, chunk)
       errorByChannel.delete(channel)
       changed(channel)
     },
