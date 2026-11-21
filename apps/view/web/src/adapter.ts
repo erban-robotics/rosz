@@ -1,16 +1,18 @@
 /**
  * 查看器适配器: 经 WebSocket (`foxglove.websocket.v1` 子集, 见 apps/view/src/protocol.rs) 接后端, 写 rosz-ui 的实时状态.
- * - 通道目录: 后端 `advertise` / `unadvertise` -> `upsertChannels` / `removeChannels`. `CompressedImage` 为图像通道, 其余为结构化消息
- * - 订阅: 跟着状态的需求窗口走, 窗口里出现的通道才订阅, 不再出现即退订
- * - 样本: 接收时刻取数据帧里后端 PC 时钟的接收时间 (不用浏览器时钟), 采样时刻由 rosz-wasm 解 Header; 图像解出 `format` 与压缩字节
+ * - 通道目录: 后端 `advertise` / `unadvertise` -> `upsertChannels` / `removeChannels`. `CompressedImage` 与 `Image` 为图像通道,
+ *   其余为结构化消息. 图像的角色 (相机 / 深度) 等首帧按 format 定
+ * - 订阅: 跟着状态的需求窗口走, 窗口里出现的通道才订阅, 不再出现即退订; 解不了的不订阅
+ * - 样本: 接收时刻取数据帧里后端 PC 时钟的接收时间 (不用浏览器时钟), 采样时刻由 rosz-wasm 解 Header; 图像换成面板吃的
+ *   `format` + 压缩字节 (见 images.ts). 面板显示不了的图像 (不认识的格式, 空数据) 整路标为解不了并退订, 原因显示在话题树与面板上
  */
 import { type ChannelInfo, createDataSourceState, type DataSource, loadRosz, type Rosz, type Sample } from '@erban-robotics/rosz-ui'
+import { COMPRESSED_IMAGE, type Converted, fromCompressed, fromRaw, isImageType, roleOf } from './images'
 
 const SUBPROTOCOL = 'foxglove.websocket.v1'
 const MESSAGE_DATA_OPCODE = 0x01
 // 数据帧头: opcode (1) + 订阅号 (4) + 接收时间纳秒 (8)
 const MESSAGE_DATA_HEADER = 13
-const COMPRESSED_IMAGE = 'sensor_msgs/msg/CompressedImage'
 // ros2msg schema 里分隔各定义的行
 const SCHEMA_SEPARATOR = /^={10,}$/m
 
@@ -28,17 +30,19 @@ export type ConnectionStatus = 'connecting' | 'open' | 'closed'
 
 export type Viewer = { dataSource: DataSource }
 
-/** 通道目录的一项: id 用话题名 (同名话题换类型时后端给新通道号, 目录里覆盖同一项) */
-function channelInfo(channel: AdvertisedChannel): ChannelInfo {
-  const isImage = channel.schemaName === COMPRESSED_IMAGE
+/**
+ * 通道目录的一项: id 用话题名 (同名话题换类型时后端给新通道号, 目录里覆盖同一项). `role` 为首帧定的图像角色,
+ * `issue` 为前端发现的解不了的原因 (图像格式), 与后端给的同样变灰
+ */
+function channelInfo(channel: AdvertisedChannel, role: string | null, issue: string | null): ChannelInfo {
   return {
     id: channel.topic,
-    kind: isImage ? 'image' : 'message',
+    kind: isImageType(channel.schemaName) ? 'image' : 'message',
     name: channel.topic,
     type: channel.schemaName,
-    role: isImage ? (/depth/i.test(channel.topic) ? 'depth' : 'camera') : null,
+    role,
     isStatic: channel.transientLocal ?? false,
-    undecodable: channel.undecodable ?? null,
+    undecodable: channel.undecodable ?? issue,
   }
 }
 
@@ -74,6 +78,11 @@ export function connect(onReady: (viewer: Viewer) => void, onStatus: (status: Co
   const subscriptionChannel = new Map<number, number>()
   const channelSubscription = new Map<number, number>()
   let nextSubscription = 1
+  // 通道号 -> 首帧定的图像角色 / 前端发现的解不了的原因 / 正在编码的帧 (原始彩色每路同时只编一帧)
+  const roles = new Map<number, string>()
+  const issues = new Map<number, string>()
+  const encoding = new Set<number>()
+  const infoOf = (channel: AdvertisedChannel) => channelInfo(channel, roles.get(channel.id) ?? null, issues.get(channel.id) ?? null)
   let rosz: Rosz | null = null
   void loadRosz().then((loaded) => {
     rosz = loaded
@@ -90,7 +99,7 @@ export function connect(onReady: (viewer: Viewer) => void, onStatus: (status: Co
     for (const window of state.demandWindows())
       for (const topic of window.channels) {
         const id = channelByTopic.get(topic)
-        if (id !== undefined) wanted.add(id)
+        if (id !== undefined && !channels.get(id)?.undecodable && !issues.has(id)) wanted.add(id)
       }
     const subscribe = [...wanted].filter((id) => !channelSubscription.has(id)).map((channelId) => {
       const id = nextSubscription++
@@ -125,7 +134,7 @@ export function connect(onReady: (viewer: Viewer) => void, onStatus: (status: Co
           channelByTopic.set(channel.topic, channel.id)
           if (rosz) addSchema(rosz, channel)
         }
-        state.upsertChannels(added.map(channelInfo))
+        state.upsertChannels(added.map(infoOf))
         syncSubscriptions()
         break
       }
@@ -136,6 +145,8 @@ export function connect(onReady: (viewer: Viewer) => void, onStatus: (status: Co
           if (!channel) continue
           channels.delete(id)
           channelByTopic.delete(channel.topic)
+          roles.delete(id)
+          issues.delete(id)
           const subscription = channelSubscription.get(id)
           if (subscription !== undefined) {
             channelSubscription.delete(id)
@@ -152,30 +163,63 @@ export function connect(onReady: (viewer: Viewer) => void, onStatus: (status: Co
     }
   }
 
+  // 面板显示不了这一路: 标为解不了 (话题树变灰, 面板显示原因) 并退订
+  const markIssue = (channel: AdvertisedChannel, issue: string) => {
+    if (issues.has(channel.id)) return
+    issues.set(channel.id, issue)
+    state.upsertChannels([infoOf(channel)])
+    state.reportError(channel.topic, new Error(issue))
+    syncSubscriptions()
+  }
+
+  const appendImage = (channel: AdvertisedChannel, sample: Sample<{ format: string }>) => {
+    // 后端已换了同名话题的新通道 (或下线) 时丢掉迟到的帧
+    if (channels.get(channel.id) !== channel) return
+    const role = roleOf(sample.payload.format)
+    if (roles.get(channel.id) !== role) {
+      roles.set(channel.id, role)
+      state.upsertChannels([infoOf(channel)])
+    }
+    state.append(channel.topic, [sample])
+  }
+
+  const onImage = (channel: AdvertisedChannel, receiveTime: bigint, sampleTime: bigint | undefined, converted: Converted) => {
+    if ('issue' in converted) return markIssue(channel, converted.issue)
+    const { payload } = converted
+    if (!(payload instanceof Promise)) return appendImage(channel, { receiveTime, sampleTime, payload })
+    if (encoding.has(channel.id)) return
+    encoding.add(channel.id)
+    payload.then(
+      (encoded) => appendImage(channel, { receiveTime, sampleTime, payload: encoded }),
+      (reason: Error) => state.reportError(channel.topic, reason),
+    ).finally(() => encoding.delete(channel.id))
+  }
+
   const onData = (buffer: ArrayBuffer) => {
     const view = new DataView(buffer)
     // 解码模块加载完之前的数据帧丢掉 (实时流, 下一帧马上到)
     if (buffer.byteLength < MESSAGE_DATA_HEADER || view.getUint8(0) !== MESSAGE_DATA_OPCODE || !rosz) return
     const channelId = subscriptionChannel.get(view.getUint32(1, true))
     const channel = channelId === undefined ? undefined : channels.get(channelId)
-    if (!channel) return
+    if (!channel || issues.has(channel.id)) return
     const receiveTime = view.getBigUint64(5, true)
     const data = new Uint8Array(buffer, MESSAGE_DATA_HEADER)
     const isDecodable = !channel.undecodable
-    let sample: Sample
     try {
       const sampleTime = isDecodable ? rosz.decoder.sampleTime(channel.schemaName, data) : undefined
-      if (channel.schemaName === COMPRESSED_IMAGE && isDecodable) {
-        const { tree } = rosz.decoder.decode(COMPRESSED_IMAGE, data) as { tree: { format: string; data: Uint8Array } }
-        sample = { receiveTime, sampleTime, payload: { format: tree.format, data: tree.data } }
+      if (isImageType(channel.schemaName) && isDecodable) {
+        const { tree } = rosz.decoder.decode(channel.schemaName, data) as { tree: Record<string, unknown> }
+        const converted =
+          channel.schemaName === COMPRESSED_IMAGE
+            ? fromCompressed(tree.format as string, tree.data as Uint8Array)
+            : fromRaw(tree as Parameters<typeof fromRaw>[0])
+        onImage(channel, receiveTime, sampleTime, converted)
       } else {
-        sample = { receiveTime, sampleTime, payload: { encoding: 'cdr', data } }
+        state.append(channel.topic, [{ receiveTime, sampleTime, payload: { encoding: 'cdr', data } }])
       }
     } catch (reason) {
       state.reportError(channel.topic, reason instanceof Error ? reason : new Error(String(reason)))
-      return
     }
-    state.append(channel.topic, [sample])
   }
 
   socket.onopen = () => onStatus('open')

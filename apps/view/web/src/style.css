@@ -12,3 +12,10 @@ body,
   color: var(--foreground);
   font-family: var(--font-sans);
 }
+
+/* 曲线区的 uPlot 图例: 字号随界面小字, 颜色随主题 */
+.rosz-view-chart .u-legend {
+  font-size: var(--text-xs);
+  font-family: var(--font-mono);
+  color: var(--foreground-secondary);
+}

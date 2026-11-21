@@ -12,10 +12,19 @@
 - /wrist/depth/zstd         CompressedImage `16UC1; zstd` 640x480 (未对齐, 与彩色不成整数倍)
 - /test/basic               test_msgs/BasicTypes (rosz 不内置 test_msgs: 无法解码)
 - /silent                   JointState, 有发布端但从不发
+查看器手动验收另用的话题 (值随时间变, 不进参照):
+- /view/joint_states        JointState 100 Hz, position / velocity 为正弦
+- /view/hand/pressure       hand/PressureSensor 20 Hz, 6 路正弦
+- /wrist/left/color/compressed, /wrist/right/color/compressed   CompressedImage JPEG 640x480, 按需发布
+- /view/color/image_raw     Image rgb8 640x480, 按需发布 (原始图像)
+- /view/depth/image_raw     Image 16UC1 640x480, 按需发布
+- /view/depth/zstd_plugin   CompressedImage format "zstd" (zstd_image_transport 写法, 查看器不支持, 应显示原因)
+- /view/depth/empty         CompressedImage format "16UC1; jpeg compressed mono8", 数据为空 (真机 depth/.../compressed 的样子)
 参照: <目录>/expected.json (话题 -> rclpy 值), <目录>/color.jpg
 """
 
 import array
+import math
 import io
 import json
 import os
@@ -32,7 +41,7 @@ from rclpy.qos import DurabilityPolicy, QoSProfile
 from builtin_interfaces.msg import Time
 from geometry_msgs.msg import TransformStamped
 from hand.msg import PressureSensor
-from sensor_msgs.msg import CompressedImage, JointState
+from sensor_msgs.msg import CompressedImage, Image, JointState
 from std_msgs.msg import Header
 from test_msgs.msg import BasicTypes
 from tf2_msgs.msg import TFMessage
@@ -60,9 +69,13 @@ def png_depth(depth):
     return struct.pack("<iff", 0, 0.0, 0.0) + buffer.getvalue()
 
 
-def color_jpeg():
-    y, x = np.mgrid[0:720, 0:1280]
-    rgb = np.stack([x % 256, y % 256, (x // 5 + y // 3) % 256], axis=-1).astype(np.uint8)
+def color_rgb(width=1280, height=720, shift=0):
+    y, x = np.mgrid[0:height, 0:width]
+    return np.stack([(x + shift) % 256, y % 256, (x // 5 + y // 3) % 256], axis=-1).astype(np.uint8)
+
+
+def color_jpeg(width=1280, height=720, shift=0):
+    rgb = color_rgb(width, height, shift)
     buffer = io.BytesIO()
     PilImage.fromarray(rgb).save(buffer, format="JPEG", quality=90)
     return buffer.getvalue()
@@ -111,6 +124,7 @@ class Publisher(Node):
             self.publishers_[topic] = self.create_publisher(type(msg), topic, 10)
             self.create_timer(1.0 / rate, lambda topic=topic: self.tick(topic))
         self.create_publisher(JointState, "/silent", 10)
+        self.viewer_topics()
         static = TFMessage(transforms=transforms[:1])
         latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.create_publisher(TFMessage, "/tf_static", latched).publish(static)
@@ -123,6 +137,54 @@ class Publisher(Node):
         with open(f"{out_dir}/color.jpg", "wb") as f:
             f.write(jpeg)
         self.get_logger().info("就绪")
+
+    def viewer_topics(self):
+        """查看器验收用: 值随时间变, 不进参照."""
+        start = self.get_clock().now()
+        elapsed = lambda: (self.get_clock().now() - start).nanoseconds / 1e9  # noqa: E731
+        header = lambda frame: Header(stamp=self.get_clock().now().to_msg(), frame_id=frame)  # noqa: E731
+        depth = depth_array(640, 480)
+        raw_depth = Image(height=480, width=640, encoding="16UC1", is_bigendian=0, step=640 * 2, data=depth.tobytes())
+        raw_color = Image(height=480, width=640, encoding="rgb8", is_bigendian=0, step=640 * 3, data=color_rgb(640, 480).tobytes())
+        plugin = CompressedImage(format="zstd", data=zstandard.ZstdCompressor(level=1).compress(bytes(raw_depth.data)))
+        empty = CompressedImage(format="16UC1; jpeg compressed mono8", data=b"")
+
+        def joints():
+            t = elapsed()
+            msg = JointState(header=header("base"), name=[f"joint{i}" for i in range(7)])
+            msg.position = [math.sin(t * (1 + 0.3 * i)) for i in range(7)]
+            msg.velocity = [math.cos(t * (1 + 0.3 * i)) for i in range(7)]
+            return msg
+
+        def pressure():
+            t = elapsed()
+            return PressureSensor(header=header("left_hand"), pressure=[2 + math.sin(t + i) for i in range(5)] + [0.0])
+
+        def stamped(msg, frame):
+            def build():
+                msg.header = header(frame)
+                return msg
+            return build
+
+        topics = {
+            "/view/joint_states": (JointState, joints, 100, False),
+            "/view/hand/pressure": (PressureSensor, pressure, 20, False),
+            "/view/color/image_raw": (Image, stamped(raw_color, "color"), 15, True),
+            "/view/depth/image_raw": (Image, stamped(raw_depth, "depth"), 15, True),
+            "/view/depth/zstd_plugin": (CompressedImage, stamped(plugin, "depth"), 15, True),
+            "/view/depth/empty": (CompressedImage, stamped(empty, "depth"), 15, True),
+        }
+        for side in ["left", "right"]:
+            jpeg = CompressedImage(format="jpeg", data=color_jpeg(640, 480, shift=64 if side == "right" else 0))
+            topics[f"/wrist/{side}/color/compressed"] = (CompressedImage, stamped(jpeg, f"wrist_{side}"), 15, True)
+        for topic, (kind, build, rate, on_demand) in topics.items():
+            publisher = self.create_publisher(kind, topic, 10)
+
+            def tick(publisher=publisher, build=build, on_demand=on_demand):
+                if not on_demand or publisher.get_subscription_count() > 0:
+                    publisher.publish(build())
+
+            self.create_timer(1.0 / rate, tick)
 
     def tick(self, topic):
         msg, _, on_demand = self.messages[topic]
