@@ -1,0 +1,17 @@
+[package]
+name = "rosz-view"
+description = "rosz 查看器: 本机 HTTP/WebSocket 服务 (foxglove.websocket.v1 子集) + 嵌入前端, 以浏览器独立窗口打开"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+rosz-access.workspace = true
+rosz-decode.workspace = true
+tokio = { workspace = true, features = ["net", "process", "signal"] }
+serde_json.workspace = true
+thiserror.workspace = true
+axum = { version = "0.8", default-features = false, features = ["tokio", "http1", "ws"] }
+# 前端构建产物 (web/dist) 编进二进制; 未构建时为空, 页面提示先构建
+rust-embed = { version = "8", features = ["debug-embed", "mime-guess"] }

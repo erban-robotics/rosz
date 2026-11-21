@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/decode", "crates/access", "apps/cli", "bindings/python", "bindings/wasm"]
+members = ["crates/decode", "crates/access", "apps/cli", "apps/view","bindings/python", "bindings/wasm"]
 
 
 [workspace.package]
@@ -13,6 +13,7 @@ repository = "https://github.com/erban-robotics/rosz"
 [workspace.dependencies]
 rosz-decode = { path = "crates/decode", version = "0.1.0", default-features = false }
 rosz-access = { path = "crates/access", version = "0.1.0" }
+rosz-view = { path = "apps/view", version = "0.1.0" }
 thiserror = "2"
 serde_json = { version = "1", features = ["preserve_order"] }
 # 现场 router 为 zenoh 1.7.2, 1.9.0 以 client/peer 连接已实测可用 (robot-state-rust lessons)

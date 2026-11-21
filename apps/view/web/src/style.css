@@ -1,0 +1,14 @@
+@import "tailwindcss";
+@import "@erban-robotics/rosz-ui/theme.css";
+@import "@erban-robotics/rosz-ui/rosz-ui.css";
+@source "./";
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background: var(--surface-0);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+}
