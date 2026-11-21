@@ -92,19 +92,22 @@ export function useLivePlayback({ state, zero }: DataSource): Playback {
     handle = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(handle)
   }, [state, zero])
-  const noop = () => {}
-  return {
-    clock: playbackClock,
-    isPlaying: false,
-    speed: 1,
-    loop: null,
-    setSpeed: noop,
-    togglePlaying: noop,
-    seek: noop,
-    step: noop,
-    playRange: noop,
-    clearLoop: noop,
-  }
+  return LIVE_PLAYBACK
+}
+
+const noop = () => {}
+// 实时的播放操作都不改时刻; 同一对象, 不让下游的上下文每次重渲都换新
+const LIVE_PLAYBACK: Playback = {
+  clock: playbackClock,
+  isPlaying: false,
+  speed: 1,
+  loop: null,
+  setSpeed: noop,
+  togglePlaying: noop,
+  seek: noop,
+  step: noop,
+  playRange: noop,
+  clearLoop: noop,
 }
 
 /**

@@ -1,6 +1,6 @@
 import { lazy, type ReactNode, Suspense, useMemo } from 'react'
 import { useParentTabState } from 'react-resizable-panels'
-import { useAxis, useCatalog, useChannelPayloads, useDataSource, useDiscontinuity } from '../data-source/react'
+import { useAxis, useCatalog, useChannelPayloads, useChannels, useDataSource, useDiscontinuity } from '../data-source/react'
 import { WHOLE_TIMELINE } from '../data-source/time-axis'
 import type { ChannelInfo } from '../data-source/types'
 import { MessageView } from '../message/MessageView'
@@ -30,11 +30,9 @@ function ofKind(channels: ChannelInfo[], kind: ChannelInfo['kind']) {
 function useTracks(channels: ChannelInfo[]): SeriesTrack[] {
   const { state } = useDataSource()
   const series = useMemo(() => ofKind(channels, 'series'), [channels])
-  // 只为订阅: 序列通道数据一变 (含切轴) 即换新数组, 下面据此重取
-  const payloads = useChannelPayloads(
-    state,
-    series.map((channel) => channel.id),
-  )
+  const ids = useMemo(() => series.map((channel) => channel.id), [series])
+  useChannels(state, ids)
+  const versions = ids.map((id) => state.version(id)).join(',')
   return useMemo(
     () =>
       series.flatMap((channel) =>
@@ -42,9 +40,9 @@ function useTracks(channels: ChannelInfo[]): SeriesTrack[] {
           .samplesIn(channel.id, WHOLE_TIMELINE)
           .map((sample) => ({ channel, ...(sample.payload as Omit<SeriesTrack, 'channel'>) })),
       ),
-    // payloads变即序列通道数据变了, 须重取
+    // versions变即序列通道数据变了 (含切轴), 须重取
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [series, state, payloads],
+    [series, state, versions],
   )
 }
 
@@ -96,8 +94,10 @@ function Scene3dContent({
       spatialChannels.flatMap((channel): SpatialLayer[] => {
         const base = { channel: channel.id, name: channel.name }
         const properties = (channel.properties ?? {}) as { frame?: string; childFrame?: string }
-        if (channel.issue || !isSpatialKind(channel.type) || !properties.frame)
-          return [{ ...base, kind: 'invalid', frame: '', issue: channel.issue ?? `未知的空间种类${channel.type ?? ''}` }]
+        const issue =
+          channel.issue ??
+          (!isSpatialKind(channel.type) ? `未知的空间种类${channel.type ?? ''}` : !properties.frame ? '没有给坐标系' : null)
+        if (issue) return [{ ...base, kind: 'invalid', frame: '', issue }]
         const samples = state.samplesIn(channel.id, WHOLE_TIMELINE).map((sample) => sample.payload)
         if (samples.length === 0) return []
         return [

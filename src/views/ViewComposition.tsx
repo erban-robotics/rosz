@@ -142,7 +142,8 @@ function useAxisTimeline(dataSource: DataSource, catalog: ChannelInfo[], axis: T
     () => (isLive ? null : axisTimeline(catalog, axis, dataSource.zero)),
     [isLive, catalog, axis, dataSource.zero],
   )
-  const liveDuration = usePlaybackStore((state) => (isLive ? state.duration : 0))
+  // 实时总长每帧都变, 取整秒再订阅, 免得整个视图组装每帧重渲
+  const liveDuration = usePlaybackStore((state) => (isLive ? Math.ceil(state.duration) : 0))
   const timeline = useMemo(() => offline ?? { duration: liveDuration, stepTimes: NO_STEPS }, [offline, liveDuration])
   useLayoutEffect(() => {
     if (isLive) return

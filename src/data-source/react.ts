@@ -21,7 +21,8 @@ export function useChannels(state: DataSourceState, channels: string[]) {
   const key = channels.join('\n')
   const subscribe = useCallback(
     (listener: () => void) => {
-      const unsubscribes = key.split('\n').map((channel) => state.subscribe(channel, listener))
+      // 空列表即不订阅 (`''.split`会得到一个空名通道)
+      const unsubscribes = key === '' ? [] : key.split('\n').map((channel) => state.subscribe(channel, listener))
       return () => unsubscribes.forEach((unsubscribe) => unsubscribe())
     },
     [state, key],

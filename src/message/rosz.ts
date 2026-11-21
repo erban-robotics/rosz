@@ -16,10 +16,17 @@ let loading: Promise<Rosz> | null = null
 
 // 加载解码模块; 已加载即返回同一个
 export function loadRosz(): Promise<Rosz> {
-  loading ??= init({ module_or_path: wasmUrl }).then(() => {
-    loaded = { decoder: new Decoder(), decodeDepth }
-    return loaded
-  })
+  loading ??= init({ module_or_path: wasmUrl }).then(
+    () => {
+      loaded = { decoder: new Decoder(), decodeDepth }
+      return loaded
+    },
+    (reason) => {
+      // 加载失败 (如网络抖动) 不记住, 下次用到时重试
+      loading = null
+      throw reason
+    },
+  )
   return loading
 }
 

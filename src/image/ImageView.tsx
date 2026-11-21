@@ -214,7 +214,14 @@ function useDecodedCanvas(payload: ImagePayload | undefined, isActive: boolean) 
     }
   }, [payload, isActive])
 
-  useEffect(() => () => rendererRef.current?.dispose(), [])
+  useEffect(
+    () => () => {
+      rendererRef.current?.dispose()
+      // 清理后组件可能留着 (StrictMode重跑副作用, 热更新), 下次画时重建
+      rendererRef.current = undefined
+    },
+    [],
+  )
   return { colorRef, depthRef, painted, error }
 }
 

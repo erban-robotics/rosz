@@ -158,13 +158,15 @@ export function createDataSourceState({ mode = 'offline', axis: initialAxis = 'r
     chunk.range = { start: chunk.samples[0].receiveTime, end: chunk.range.end }
   }
 
-  // 按接收时刻统计: 现存样本数, 最近一条之前2秒内的频率
+  // 按接收时刻统计: 现存样本数, 最近2秒内的频率. 离线以该通道最近一条为准; 实时以播放头为准, 停发的话题随之归于无频率
   function computeStats(channel: string): ChannelStats {
     const samples = chunksOf(channel).flatMap((chunk) => chunk.samples)
     if (samples.length === 0) return { count: 0, frequency: null }
     let last = samples[0].receiveTime
     for (const sample of samples) if (sample.receiveTime > last) last = sample.receiveTime
-    const recent = samples.filter((sample) => sample.receiveTime > last - FREQUENCY_WINDOW_NANOSECONDS)
+    const now = mode === 'live' && latestReceive !== null && latestReceive > last ? latestReceive : last
+    const recent = samples.filter((sample) => sample.receiveTime > now - FREQUENCY_WINDOW_NANOSECONDS)
+    if (recent.length < 2) return { count: samples.length, frequency: null }
     let first = last
     for (const sample of recent) if (sample.receiveTime < first) first = sample.receiveTime
     const span = Number(last - first) / 1e9
@@ -222,8 +224,9 @@ export function createDataSourceState({ mode = 'offline', axis: initialAxis = 'r
       return () => void catalogListeners.delete(listener)
     },
 
-    // 按样本统计的通道量 (现存样本数, 频率); 通道数据不变时为同一对象
+    // 按样本统计的通道量 (现存样本数, 频率); 离线时通道数据不变即为同一对象, 实时随播放头前移每次重算
     stats(channel: string): ChannelStats {
+      if (mode === 'live') return computeStats(channel)
       const version = versionByChannel.get(channel) ?? 0
       const cached = statsCache.get(channel)
       if (cached && cached.version === version) return cached.stats
