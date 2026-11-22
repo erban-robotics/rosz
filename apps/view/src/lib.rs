@@ -34,7 +34,7 @@ pub const DISCONNECT_GRACE: Duration = Duration::from_secs(5);
 /// 没有自己的窗口可等 (子进程已退出或退回 xdg-open) 时, 这么久仍无首个连接即退出
 pub const FIRST_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 /// 前端未构建时的提示
-const NOT_BUILT: &str = "前端未构建 (apps/view/web/dist 为空): 先在 apps/view/web 里 npm run build 再编译";
+const NOT_BUILT: &str = "前端未构建 (apps/view/web/dist 为空): 先在仓库根 bindings/wasm/build.sh && npm install && npm run build -w rosz-view-web 再编译";
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
 /// 连接的内核发送缓冲: 默认自动调大到几 MB, 前端读得慢时帧先堆在内核里, 发送队列的取舍 (见 [`outbox`]) 就失效了.
 /// 本机回环实测 64 KiB 吞吐与默认无异 (16 KiB 起明显变慢); 内核按设的两倍分配

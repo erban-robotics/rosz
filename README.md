@@ -1,17 +1,18 @@
 # rosz
 
-不装 ROS 即可读取 ROS 2 (rmw_zenoh) 话题: 直连 Zenoh router, 靠 liveliness token 发现话题, 按内置 `.msg` (common_interfaces jazzy 全套 + erban 自定义) 通用解码, 并解码 JPEG 与深度 (`16UC1; zstd`, `16UC1; compressedDepth`). 同一份 Rust 代码出 Rust 库, Python wheel, 浏览器 WASM 与 `rosz` 命令行.
+不装 ROS 即可读取 ROS 2 (rmw_zenoh) 话题: 直连 Zenoh router, 靠 liveliness token 发现话题, 按内置 `.msg` (common_interfaces jazzy 全套 + erban 自定义) 通用解码, 并解码 JPEG 与深度 (`16UC1; zstd`, `16UC1; compressedDepth`). 同一份 Rust 代码出 Rust 库, Python wheel, 浏览器 WASM 与 `rosz` 命令行; 另有共享可视化 UI 包 rosz-ui (`packages/rosz-ui`, ADP, erban-caring webapp 与查看器共用).
 
 第一版只订阅, 不发布不调服务; 传输层直接用 `zenoh` crate 与自写的 rmw_zenoh 订阅端 (与现场 rmw_zenoh_cpp 0.2.11 对齐). 以后加发布与服务时, 传输层建在 hiroz 之上.
 
 ## 安装
 
-产物都挂在 [GitHub Release](https://github.com/erban-robotics/rosz/releases), 不发公共平台. 以 `v0.2.2` 为例:
+产物都挂在 [GitHub Release](https://github.com/erban-robotics/rosz/releases), 不发公共平台. 以 `v0.4.0` 为例:
 
-- Python (x86_64 / aarch64, Python 3.10+): `pip install rosz --find-links https://github.com/erban-robotics/rosz/releases/expanded_assets/v0.2.2`
-- CLI 与查看器: 下载 `rosz-0.2.2-linux-x86_64` (或 `-aarch64`), musl 静态单文件, 查看器前端已嵌入, `chmod +x` 即用 (`rosz view` 即查看器)
-- npm (浏览器解码): `"@erban-robotics/rosz-wasm": "https://github.com/erban-robotics/rosz/releases/download/v0.2.2/erban-robotics-rosz-wasm-0.2.2.tgz"`. npm 12 起默认 `allow-remote=none`, 拒装远程 tgz, 需在项目 `.npmrc` 写 `allow-remote=all` (或安装时加 `--allow-remote=all`)
-- Rust: `rosz-access = { git = "https://github.com/erban-robotics/rosz", tag = "v0.2.2" }` (只解码用 `rosz-decode`)
+- Python (x86_64 / aarch64, Python 3.10+): `pip install rosz --find-links https://github.com/erban-robotics/rosz/releases/expanded_assets/v0.4.0`
+- CLI 与查看器: 下载 `rosz-0.4.0-linux-x86_64` (或 `-aarch64`), musl 静态单文件, 查看器前端已嵌入, `chmod +x` 即用 (`rosz view` 即查看器)
+- npm (浏览器解码): `"@erban-robotics/rosz-wasm": "https://github.com/erban-robotics/rosz/releases/download/v0.4.0/erban-robotics-rosz-wasm-0.4.0.tgz"`. npm 12 起默认 `allow-remote=none`, 拒装远程 tgz, 需在项目 `.npmrc` 写 `allow-remote=all` (或安装时加 `--allow-remote=all`)
+- npm (共享 UI 包): `"@erban-robotics/rosz-ui": "https://github.com/erban-robotics/rosz/releases/download/v0.4.0/erban-robotics-rosz-ui-0.4.0.tgz"`, 同样需 `allow-remote=all`, 依赖的同版本 rosz-wasm 随之装上. 接入方式见 [packages/rosz-ui/README.md](packages/rosz-ui/README.md)
+- Rust: `rosz-access = { git = "https://github.com/erban-robotics/rosz", tag = "v0.4.0" }` (只解码用 `rosz-decode`)
 
 ## router 地址
 
@@ -99,9 +100,10 @@ if let Some(msg) = session.latest("/joint_states", std::time::Duration::from_sec
 | `crates/decode` | `rosz-decode`: `.msg` 注册表, XCDR1 解码, RIHS01, 媒体解码 (JPEG 在 `jpeg` 开关后) |
 | `crates/access` | `rosz-access`: rmw_zenoh 话题发现与订阅 |
 | `apps/cli` | `rosz` 命令行 |
-| `apps/view` | `rosz-view`: 查看器后端 (`rosz view`); `web/` 为前端 (Vite + React + rosz-ui), 构建产物编进二进制 |
+| `apps/view` | `rosz-view`: 查看器后端 (`rosz view`); `web/` 为前端 (Vite + React + rosz-ui 源码), 构建产物编进二进制 |
 | `bindings/python` | PyO3 wheel |
 | `bindings/wasm` | wasm-bindgen 模块与 npm 包 |
+| `packages/rosz-ui` | 共享可视化 UI 包 `@erban-robotics/rosz-ui` (原 erban-robotics/rosz-ui 仓库, 带历史并入), 见 [其 README](packages/rosz-ui/README.md) |
 | `messages` | 内置 `.msg` 与解码金样本, 见 [messages/README.md](messages/README.md) |
 | `scripts/jazzy` | 一次性 jazzy 容器 (rmw_zenoh_cpp 0.2.11): 生成金样本, 互通测试的发布端 |
 | `tests/e2e` | 互通测试 (pytest) |
@@ -111,7 +113,10 @@ if let Some(msg) = session.latest("/joint_states", std::time::Duration::from_sec
 ```bash
 cargo test -p rosz-decode                  # 金样本回归: 逐字段对照 rclpy, 188 个类型 RIHS01 对照 rosidl
 bindings/wasm/build.sh && node --test bindings/wasm/test/decode.test.mjs
+npm install && npm run check -w @erban-robotics/rosz-ui    # rosz-ui: tsc + eslint + vitest
 ```
+
+前端 (WASM 包, rosz-ui, 查看器前端) 为仓库根的一个 npm workspace, 依赖装在根 `node_modules`, 锁文件为根 `package-lock.json`. WASM 包的 workspace 成员是 `bindings/wasm/pkg` (由 `build.sh` 生成), 所以 `npm install` 前须先 `bindings/wasm/build.sh`. rosz-ui 依赖本地 WASM 包, 查看器前端经 vite alias 与 tsconfig `paths` 直接用 rosz-ui 源码, 改解码或 UI 不用先发版.
 
 互通测试用一次性 jazzy 容器发布 (不连机器人), 本机在无 ROS 的 venv 里装 wheel 接收:
 
@@ -128,13 +133,13 @@ docker rm -f rosz-jazzy
 查看器前端须先构建, 产物 (`apps/view/web/dist`) 在编译 `rosz` 时编进二进制; 未构建时页面只提示先构建. 查看器协议不写自动化测试, 靠手动验收 (可用上面的 jazzy 容器发布):
 
 ```bash
-(cd apps/view/web && npm install && npm run build) && cargo build --release -p rosz-cli
+bindings/wasm/build.sh && npm install && npm run build -w rosz-view-web && cargo build --release -p rosz-cli
 target/release/rosz view --router tcp/127.0.0.1:7447
 # 3D 面板: 容器里另起 scripts/jazzy/publish_3d.py (static_transform_publisher, 动态 /tf, 两路点云; 用法见其开头), 过一会儿再开查看器
 # 改前端时: 一边 rosz view --no-open 起后端, 一边在 apps/view/web 里 npm run dev (WebSocket 经代理转到 7450)
-# 同时改 rosz-ui 时: ROSZ_UI_SRC=~/projects/rosz-ui/src npm run dev (或 npx vite build), vite alias 指向本机源码 (rosz-ui README "开发期指向本地源码")
+# 查看器前端直接用 packages/rosz-ui 的源码, 改 rosz-ui 即时生效
 ```
 
 ## 发版
 
-整个 workspace 统一版本号 (`Cargo.toml` 的 `workspace.package.version`, Python 与 npm 包同此). 合进 main 后手动推 `vX.Y.Z` tag, GitHub 托管 runner (`.github/workflows/release.yml`) 构建 wheel (两架构), WASM tgz, CLI 二进制并挂到 Release. CLI 二进制构建前先 `npm ci && npm run build` 查看器前端, 构建后检查前端已嵌入, 所以 Release 上的 `rosz` 即带界面的查看器单文件.
+整个仓库统一版本号: `Cargo.toml` 的 `workspace.package.version` 为准, Python 包同此, `bindings/wasm/package.json` 与 `packages/rosz-ui/package.json` 的 `version` 须手动改成同一个 (发版时检查; 打包时也从 `Cargo.toml` 取), 改后 `cargo check` 与 `bindings/wasm/build.sh && npm install` 更新两个锁文件. 合进 main 后手动推 `vX.Y.Z` tag, GitHub 托管 runner (`.github/workflows/release.yml`) 构建 wheel (两架构), WASM tgz, rosz-ui tgz (`packages/rosz-ui/pack.sh`, 其对 rosz-wasm 的依赖改写为同版本 Release 地址), 查看器前端与 CLI 二进制并挂到 Release. CLI 二进制编进同一任务构建的查看器前端, 构建后检查前端已嵌入, 所以 Release 上的 `rosz` 即带界面的查看器单文件.

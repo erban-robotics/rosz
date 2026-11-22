@@ -1,0 +1,131 @@
+/* rosz-ui 默认主题 token (暗色, 取自 ADP 视觉系统). 已有这些 token 的应用 (如 ADP) 不必引入; 查看器等新应用在 Tailwind 入口里 @import 本文件 */
+
+@theme inline {
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-primary-soft: var(--primary-soft);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-foreground-secondary: var(--foreground-secondary);
+  --color-foreground-tertiary: var(--foreground-tertiary);
+  --color-background: var(--background);
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface-hover: var(--surface-hover);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-status-normal: var(--status-normal);
+  --color-status-warning: var(--status-warning);
+  --color-status-danger: var(--status-danger);
+  --color-status-running: var(--status-running);
+  --color-status-structure: var(--status-structure);
+  --color-status-violet: var(--status-violet);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --font-sans: 'Inter', 'Noto Sans SC', 'Noto Sans CJK SC', 'Microsoft YaHei', 'PingFang SC', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', monospace;
+  /* 小字两档写成px: 根字号14px下rem档会落到12px以下; 字重经--tw-font-weight兜底, font-medium等照样盖过 */
+  --text-xs: 12px;
+  --text-xs--font-weight: var(--small-text-weight);
+  --text-sm: 13px;
+  --text-sm--font-weight: var(--small-text-weight);
+  /* 统一缓动: 工具类`ease-standard`, Tailwind的transition工具类缺省也用它 */
+  --ease-standard: var(--ease-standard-curve);
+  --default-transition-timing-function: var(--ease-standard-curve);
+}
+
+:root {
+  color-scheme: dark;
+  /* 根字号: 全站rem按它缩放, 大屏靠系统DPI缩放而不是按视口放大 */
+  font-size: 14px;
+  /* 原生复选框与单选框的选中色跟主色走 */
+  accent-color: var(--primary);
+  /* 界面零饱和: 只有强调色, 状态色与曲线系列色带色相 */
+  /* 底色三层: 越上层越亮, 不靠阴影区分 */
+  --surface-0: oklch(0.31 0 0);
+  --surface-1: oklch(0.345 0 0);
+  --surface-2: oklch(0.39 0 0);
+  --surface-hover: oklch(0.43 0 0);
+  /* 线两种: 比底暗的缝, 比底亮的描边 */
+  --line: oklch(0.25 0 0);
+  --line-strong: oklch(0.47 0 0);
+  /* 视图区面板间的暗缝 */
+  --gutter: oklch(0.24 0 0);
+  /* 文字三级, 在surface-1上对比10.9 / 8.3 / 5.8 */
+  --foreground: oklch(0.98 0 0);
+  --foreground-secondary: oklch(0.89 0 0);
+  --foreground-tertiary: oklch(0.78 0 0);
+  /* <=13px的小字加重一档, 暗底上细字发虚 (Inter为可变字重) */
+  --small-text-weight: 450;
+  /* 唯一强调色蓝: 只给可点物, 选中与焦点 */
+  --primary: oklch(0.74 0.12 255);
+  /* 蓝薄层: 选中行, 可点胶囊的底; 其上的字用foreground, 蓝字在薄层上对比不足4.5 */
+  --primary-soft: oklch(0.62 0.13 258 / 0.4);
+  /* 状态色: 作文字在surface-0与surface-1上对比>=4.5 */
+  --status-normal: oklch(0.8 0.15 160);
+  --status-warning: oklch(0.85 0.15 82);
+  --status-danger: oklch(0.74 0.15 22);
+  --status-running: oklch(0.72 0.13 252);
+  --status-structure: oklch(0.76 0 0);
+  --status-violet: oklch(0.81 0.11 306);
+  /* 浮层 (底部输入条, 命令面板) 唯一的一层投影; 卡片与面板不投影 */
+  --floating-shadow: 0 12px 32px -12px oklch(0 0 0 / 0.55);
+  --ease-standard-curve: cubic-bezier(0.23, 1, 0.32, 1);
+
+  /* shadcn语义变量映射到上面的token */
+  --background: var(--surface-0);
+  --card: var(--surface-1);
+  --card-foreground: var(--foreground);
+  --popover: var(--surface-2);
+  --popover-foreground: var(--foreground);
+  --primary-foreground: var(--surface-0);
+  --secondary: var(--surface-2);
+  --secondary-foreground: var(--foreground);
+  --muted: var(--surface-2);
+  --muted-foreground: var(--foreground-secondary);
+  --accent: var(--surface-hover);
+  --accent-foreground: var(--foreground);
+  --destructive: var(--status-danger);
+  --border: var(--line-strong);
+  /* 输入框比面板暗, 像控件槽 */
+  --input: oklch(0.26 0 0);
+  --ring: var(--primary);
+  /* shadcn Sidebar: 与页面同底, 悬停与选中用表面层级 */
+  --sidebar: var(--surface-0);
+  --sidebar-foreground: var(--foreground-secondary);
+  --sidebar-accent: var(--surface-hover);
+  --sidebar-accent-foreground: var(--foreground);
+  --sidebar-border: var(--line);
+  --sidebar-ring: var(--primary);
+  --radius: 0.3rem;
+  /* 曲线类别色, 按序分配不循环; 在surface-1上对比>=3, 取值经色觉缺陷区分度校验 */
+  --series-1: #63b1f9;
+  --series-2: #e3550b;
+  --series-3: #1c985a;
+  --series-4: #fcbb2e;
+  --series-5: #cf6194;
+  --series-6: #a9e686;
+  --series-7: #7777f2;
+  --series-8: #f58b85;
+}

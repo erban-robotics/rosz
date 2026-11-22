@@ -1,4 +1,4 @@
-# 推 vX.Y.Z tag: 构建 Python wheel (x86_64 + aarch64, abi3), WASM npm tgz, CLI 静态二进制 (musl), 挂到 GitHub Release.
+# 推 vX.Y.Z tag: 构建 Python wheel (x86_64 + aarch64, abi3), WASM 与 rosz-ui 的 npm tgz, CLI 静态二进制 (musl), 挂到 GitHub Release.
 # 只用 GitHub 托管 runner (公开仓库下 fork PR 可在自托管 runner 上执行代码, 不用 .99)
 name: release
 on:
@@ -15,6 +15,10 @@ jobs:
         run: |
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
           test "v$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME 与 Cargo.toml 版本 $version 不符"; exit 1; }
+          for pkg in bindings/wasm/package.json packages/rosz-ui/package.json; do
+            v=$(node -p "require('./$pkg').version")
+            test "$v" = "$version" || { echo "$pkg 版本 $v 与 Cargo.toml 版本 $version 不符"; exit 1; }
+          done
 
   wheels:
     needs: version
@@ -62,7 +66,8 @@ jobs:
           pip install dist/*_${{ matrix.arch }}.whl
           python -c "import rosz; print(rosz.__version__)"
 
-  wasm:
+  # npm 产物 (WASM tgz, rosz-ui tgz) 与查看器前端: 同一 npm workspace, rosz-ui 与查看器用本地 WASM 包
+  web:
     needs: version
     runs-on: ubuntu-24.04
     steps:
@@ -78,13 +83,22 @@ jobs:
           node-version: "24"
       - run: bindings/wasm/build.sh
       - run: node --test bindings/wasm/test/decode.test.mjs
+      - run: npm ci
+      - run: npm run check -w @erban-robotics/rosz-ui
+      - run: packages/rosz-ui/pack.sh
+      - name: 构建查看器前端
+        run: npm run build -w rosz-view-web
       - uses: actions/upload-artifact@v4
         with:
-          name: wasm
+          name: npm
           path: dist/*.tgz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: view-web
+          path: apps/view/web/dist
 
   cli:
-    needs: version
+    needs: web
     runs-on: ubuntu-24.04
     strategy:
       matrix:
@@ -102,13 +116,11 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-zigbuild
-      # 查看器 (`rosz view`) 的前端由 rust-embed 把 apps/view/web/dist 编进二进制: 须先构建, 否则页面为空
-      - uses: actions/setup-node@v4
+      # 查看器 (`rosz view`) 的前端由 rust-embed 把 apps/view/web/dist 编进二进制: 用 web 任务构建的, 否则页面为空
+      - uses: actions/download-artifact@v4
         with:
-          node-version: "24"
-      - name: 构建查看器前端
-        working-directory: apps/view/web
-        run: npm ci && npm run build
+          name: view-web
+          path: apps/view/web/dist
       - run: cargo zigbuild --release --locked --target ${{ matrix.target }} -p rosz-cli
       - name: 确认前端已嵌入
         run: |
@@ -124,7 +136,7 @@ jobs:
           path: dist/rosz-*
 
   release:
-    needs: [wheels-smoke, wasm, cli]
+    needs: [wheels-smoke, web, cli]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -138,6 +150,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --notes-file - <<NOTES
-          安装方式见 README. CLI 与查看器: \`rosz-*-linux-<架构>\` 为 musl 静态单文件, 查看器前端已嵌入, \`chmod +x\` 后 \`rosz view --router <地址>\` 即开. Python: \`pip install rosz --find-links https://github.com/${GITHUB_REPOSITORY}/releases/expanded_assets/${GITHUB_REF_NAME}\`
+          # dist 里还有 view-web 产物 (已编进 CLI), 不上传
+          gh release create "$GITHUB_REF_NAME" dist/*.whl dist/*.tgz dist/rosz-*-linux-* --title "$GITHUB_REF_NAME" --notes-file - <<NOTES
+          安装方式见 README. CLI 与查看器: \`rosz-*-linux-<架构>\` 为 musl 静态单文件, 查看器前端已嵌入, \`chmod +x\` 后 \`rosz view --router <地址>\` 即开. Python: \`pip install rosz --find-links https://github.com/${GITHUB_REPOSITORY}/releases/expanded_assets/${GITHUB_REF_NAME}\`. npm (\`erban-robotics-rosz-ui-*.tgz\` 共享 UI 包, \`erban-robotics-rosz-wasm-*.tgz\` 浏览器解码): 依赖写本 Release 的下载地址, 项目 \`.npmrc\` 需 \`allow-remote=all\`.
           NOTES

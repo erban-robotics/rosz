@@ -1,6 +1,6 @@
 {
   "name": "@erban-robotics/rosz-wasm",
-  "version": "0.2.2",
+  "version": "0.4.0",
   "description": "rosz 浏览器解码模块: ROS 2 CDR 解码, RIHS01, 深度 (16UC1; zstd / compressedDepth png)",
   "type": "module",
   "main": "rosz_wasm.js",

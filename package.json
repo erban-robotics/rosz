@@ -1,0 +1,6 @@
+{
+  "name": "rosz-workspace",
+  "private": true,
+  "description": "rosz 仓库的 npm workspace: WASM 解码包 (须先 bindings/wasm/build.sh 生成 pkg/), 共享 UI 包 rosz-ui, 查看器前端",
+  "workspaces": ["bindings/wasm/pkg", "packages/rosz-ui", "apps/view/web"]
+}
