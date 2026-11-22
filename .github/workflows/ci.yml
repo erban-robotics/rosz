@@ -1,4 +1,4 @@
-# 推送与 PR: 解码金样本回归 + WASM 解码测试. 只用 GitHub 托管 runner (公开仓库不用自托管)
+# 推送与 PR: 解码金样本回归, WASM 解码测试, rosz-ui 检查 (tsc, eslint, vitest) 与构建, 查看器前端构建. 只用 GitHub 托管 runner (公开仓库不用自托管)
 name: ci
 on:
   push:
@@ -24,3 +24,7 @@ jobs:
           node-version: "24"
       - run: bindings/wasm/build.sh
       - run: node --test bindings/wasm/test/decode.test.mjs
+      - run: npm ci
+      - run: npm run check -w @erban-robotics/rosz-ui
+      - run: npm run build -w @erban-robotics/rosz-ui
+      - run: npm run build -w rosz-view-web

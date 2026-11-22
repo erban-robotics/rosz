@@ -1,6 +1,6 @@
 # rosz-ui
 
-rosz 的共享可视化 UI 包: 数据源状态, 播放时钟与回放 / 实时查看面板, 供 ADP, erban-caring webapp 与 rosz 查看器共用. 从 ADP 回放 (`frontend/src/replay`, `views`) 抽取, ADP 牵头开发.
+rosz 的共享可视化 UI 包: 数据源状态, 播放时钟与回放 / 实时查看面板, 供 ADP, erban-caring webapp 与 rosz 查看器共用. 从 ADP 回放 (`frontend/src/replay`, `views`) 抽取, ADP 牵头开发. 原为单独仓库 erban-robotics/rosz-ui (发到 0.3.0), 自 0.4.0 起并入 rosz 仓库 `packages/rosz-ui`, 版本号与 rosz 统一, 随 rosz 一同发版.
 
 - 接缝在包内的前端状态: 适配器 (ADP, webapp, 查看器) 写通道目录与样本, 订阅状态发出的需求窗口; 面板只读状态与播放时钟. 状态, 时钟为纯 TS 对象, React 侧只有 Provider, 钩子与面板
 - 首批组件: 视图组装 (可拖拽的布局系统) 与播放控件, 图像面板 (彩色, 视频, 深度伪彩色, 2D 叠加), 序列泳道 (uplot), 事件轨, 3D 场景, 消息树, 通道列表
@@ -8,13 +8,13 @@ rosz 的共享可视化 UI 包: 数据源状态, 播放时钟与回放 / 实时�
 
 ## 安装
 
-产物挂在 [GitHub Release](https://github.com/erban-robotics/rosz-ui/releases), 不发公共平台, 依赖写下载地址精确钉版本:
+产物挂在 rosz 的 [GitHub Release](https://github.com/erban-robotics/rosz/releases), 不发公共平台, 依赖写下载地址精确钉版本:
 
 ```json
-"@erban-robotics/rosz-ui": "https://github.com/erban-robotics/rosz-ui/releases/download/v0.1.0/erban-robotics-rosz-ui-0.1.0.tgz"
+"@erban-robotics/rosz-ui": "https://github.com/erban-robotics/rosz/releases/download/v0.4.0/erban-robotics-rosz-ui-0.4.0.tgz"
 ```
 
-npm 12 起默认拒装远程 tgz, 项目 `.npmrc` 写 `allow-remote=all`. 本包依赖的 rosz-wasm 也是 rosz Release 上的 tgz, 随之装上.
+npm 12 起默认拒装远程 tgz, 项目 `.npmrc` 写 `allow-remote=all`. 本包依赖同一 Release 上同版本的 rosz-wasm tgz, 随之装上. 0.3.0 及以前在旧仓库 erban-robotics/rosz-ui 的 Release.
 
 peer 依赖: `react` `react-dom` 19, `three` 0.185, `@react-three/fiber` 9.
 
@@ -46,12 +46,12 @@ peer 依赖: `react` `react-dom` 19, `three` 0.185, `@react-three/fiber` 9.
 
 ### 开发期指向本地源码
 
-ADP 牵头改 UI 时, 用环境变量让 vite alias 指向本机 `~/projects/rosz-ui` 的源码, 边改边看, 改完发版再升依赖. 包内一律相对路径 import, 指向源码即可用:
+ADP 牵头改 UI 时, 用环境变量让 vite alias 指向本机 rosz 仓库里本包的源码 (`~/projects/rosz/packages/rosz-ui/src`), 边改边看, 改完随 rosz 发版再升依赖. rosz 查看器在同一仓库内, 始终直接用源码, 不用这一节. 包内一律相对路径 import, 指向源码即可用:
 
 ```ts
 // vite.config.ts
 import { readFileSync } from 'fs'
-const roszUi = process.env.ROSZ_UI_SRC // 如 ~/projects/rosz-ui/src
+const roszUi = process.env.ROSZ_UI_SRC // 如 ~/projects/rosz/packages/rosz-ui/src
 // 源码目录不在应用仓库下, 源码里的裸import往上找不到应用的node_modules: 本包的依赖 (随发版包装进应用) 一律从应用解析
 const roszUiDependencies = roszUi
   ? Object.keys(JSON.parse(readFileSync(`${roszUi}/../package.json`, 'utf8')).dependencies ?? {})
@@ -71,7 +71,7 @@ export default defineConfig({
 })
 ```
 
-本地源码下的 `rosz-ui.css` 同样带 `@source "./"`, Tailwind 扫的是源码目录. 源码目录不必 `npm install`, 本包依赖由应用里装的发版包带进; 源码新加依赖时应用要先另装上.
+本地源码下的 `rosz-ui.css` 同样带 `@source "./"`, Tailwind 扫的是源码目录. rosz 仓库不必 `npm install`, 本包依赖由应用里装的发版包带进; 源码新加依赖时应用要先另装上. 若 rosz 仓库根已 `npm install` 过, 源码里的裸 import 会先找到仓库根 `node_modules` 里的另一份 (React 等出两份), 所以上面的 `dedupe` 必须写全.
 
 ## 主题
 
@@ -155,15 +155,19 @@ ADP `frontend/src/replay` 与 `views` 中搬进本包的模块改从本包导入
 
 ## 开发
 
+本包是 rosz 仓库 npm workspace 的成员, 依赖的 rosz-wasm 为同仓库 `bindings/wasm` 的本地包 (`package.json` 里写 `"*"`, 打包时改成同版本 Release 地址). 在仓库根:
+
 ```bash
+bindings/wasm/build.sh                              # 先生成 WASM 包 (bindings/wasm/pkg), 需 wasm32 目标与 wasm-bindgen
 npm install
-npm run check        # tsc + eslint + vitest (状态接口的测试)
-npm run build        # dist/: ESM + 类型声明 + css
-npm run dev          # playground, http://localhost:5173
+npm run check -w @erban-robotics/rosz-ui            # tsc + eslint + vitest (状态接口的测试)
+npm run build -w @erban-robotics/rosz-ui            # dist/: ESM + 类型声明 + css
+npm run dev -w @erban-robotics/rosz-ui              # playground, http://localhost:5173
+packages/rosz-ui/pack.sh                            # 构建并打包到仓库 dist/erban-robotics-rosz-ui-<版本>.tgz
 ```
 
 playground (`playground/`, 不进包) 回放 `capture.py` 录下的真实话题: `ROSZ_ROUTER=tcp/<orin>:7447 python playground/capture.py playground/captures/head 6` (需装 rosz wheel 与 zstandard; 录制不入库). 查询参数见 `playground/main.tsx` 开头: `mode=offline` 走离线回放, `copies=3` 把彩色复制成多路测 CPU, `depth=zstd|png` 只放一种深度. 页面上 `await probeDepth()` 解各深度首帧, 与录制时 Python `depth()` 的毫米值对照. 视频: `node playground/encode-video.mjs`用ffmpeg (libx264, libsvtav1) 造H.264与AV1各一路到`playground/captures/video`, 打开`?capture=video&mode=offline`, 页面上`await compareVideo('/video/h264', 帧号)`把画面与ffmpeg解出的同帧PNG逐像素比 (同帧RGB平均差约0.5, 相邻帧6以上); 播放头经`playbackStore.getState().seek(秒)`跳.
 
 ## 发版
 
-改 `package.json` 的 `version`, 合进 main 后手动推 `vX.Y.Z` tag, GitHub 托管 runner (`.github/workflows/release.yml`) 检查, 构建, `npm pack` 并把 tgz 挂到 Release.
+随 rosz 一同发 (见仓库根 README "发版"): 版本号与 rosz workspace 统一, 推 `vX.Y.Z` tag 后 Release 上即有 `erban-robotics-rosz-ui-<版本>.tgz`.
