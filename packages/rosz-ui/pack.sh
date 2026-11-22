@@ -5,6 +5,7 @@ set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 repo=$(cd "$here/../.." && pwd)
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' "$repo/Cargo.toml" | head -1)
+rm -rf "$here/dist"   # 库构建不清空 dist (emptyOutDir: false), 先删掉旧产物再打包
 (cd "$here" && npm run build)
 stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT
