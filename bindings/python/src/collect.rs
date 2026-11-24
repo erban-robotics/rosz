@@ -9,7 +9,7 @@ use rosz_access::{CollectError, CollectOptions, CollectStats, Compression, DEFAU
 
 use crate::RUNTIME;
 
-fn to_py_err(error: CollectError) -> PyErr {
+fn collect_error(error: CollectError) -> PyErr {
     match error {
         CollectError::Create { .. } => PyOSError::new_err(error.to_string()),
         // 建线程失败同 Python threading (RuntimeError)
@@ -32,7 +32,7 @@ pub(crate) fn start(
     };
     let options = CollectOptions { compression, chunk_size: chunk_size.unwrap_or(DEFAULT_CHUNK_SIZE) };
     let names: Vec<&str> = topics.iter().map(String::as_str).collect();
-    let collector = py.detach(|| RUNTIME.block_on(session.collect(&path, &names, options))).map_err(to_py_err)?;
+    let collector = py.detach(|| RUNTIME.block_on(session.collect(&path, &names, options))).map_err(collect_error)?;
     Ok(Collector { inner: Mutex::new(Some(collector)), last: Mutex::new(None) })
 }
 
@@ -62,7 +62,7 @@ impl Collector {
     fn stop<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let collector = self.inner.lock().unwrap().take();
         if let Some(collector) = collector {
-            let stats = py.detach(|| RUNTIME.block_on(collector.stop())).map_err(to_py_err)?;
+            let stats = py.detach(|| RUNTIME.block_on(collector.stop())).map_err(collect_error)?;
             *self.last.lock().unwrap() = Some(stats);
         }
         self.stats(py)

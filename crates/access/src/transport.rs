@@ -3,6 +3,7 @@
 //! 本模块只按 "话题名 + DDS 类型名 + 类型 hash" 处理原始 CDR 字节, 不碰消息定义; 解码在上层.
 //! 订阅, 采集, 发布, 服务共用这一层: 一个 [`Transport`] 即一个 zenoh 会话 (client 模式连 router) 上的一个 ROS 节点.
 
+use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -18,12 +19,46 @@ use hiroz::queue::BoundedQueue;
 use hiroz_protocol::qos as wire_qos;
 use zenoh::sample::Sample;
 
-use crate::now_ns;
+use crate::{Registry, now_ns};
 
 /// 本进程在 ROS 图里的节点名
 pub(crate) const NODE_NAME: &str = "rosz";
-/// 订阅端 keep_last 默认深度 (同 rclpy 默认)
-const DEFAULT_DEPTH: usize = 10;
+/// keep_last 默认深度 (同 rclpy 默认), 订阅与发布共用
+pub(crate) const DEFAULT_DEPTH: usize = 10;
+
+/// 在阻塞线程池里跑 hiroz/zenoh 的同步建立调用 (`build()` 等内部 `.wait()`); 任务 panic 也折成 zenoh 错误.
+pub(crate) async fn blocking<T: Send + 'static>(
+    f: impl FnOnce() -> Result<T, zenoh::Error> + Send + 'static,
+) -> Result<T, zenoh::Error> {
+    tokio::task::spawn_blocking(f).await.map_err(|e| e.to_string())?
+}
+
+/// 话题名规范为带首 `/`, 无尾 `/` 的绝对名.
+pub(crate) fn absolute_topic(name: &str) -> String {
+    format!("/{}", name.trim_matches('/'))
+}
+
+/// 注册表里的类型 (`包/msg/X` 或 `包/srv/X`, 须是规范全名) 的 hiroz 类型信息: DDS 类型名 + 由定义算的 RIHS01.
+/// 没有定义或算不出 hash 为 None.
+pub(crate) fn type_info(registry: &Registry, name: &str) -> Option<TypeInfo> {
+    let hash = registry.rihs01(name).ok()?;
+    let dds = hiroz_schema::type_name::dds_from_canonical(name)?;
+    Some(TypeInfo::new(&dds, TypeHash::from_rihs_string(&hash)?))
+}
+
+/// 按话题归并发布端: 每话题一个代表发布端与发布端个数.
+/// 发布端 durability 不一时以 transient_local 的为代表: 订阅时取得到它缓存的历史.
+pub(crate) fn by_topic(publishers: impl IntoIterator<Item = Endpoint>) -> HashMap<String, (Endpoint, usize)> {
+    let mut out: HashMap<String, (Endpoint, usize)> = HashMap::new();
+    for publisher in publishers {
+        let entry = out.entry(publisher.topic.clone()).or_insert_with(|| (publisher.clone(), 0));
+        entry.1 += 1;
+        if publisher.qos.transient_local && !entry.0.qos.transient_local {
+            entry.0 = publisher;
+        }
+    }
+    out
+}
 
 /// 端点 QoS 里 rosz 关心的部分.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -135,7 +170,7 @@ impl Transport {
     /// 以 client 模式连 router (`tcp/host:port`), 声明节点 token, 并完成首轮图发现.
     /// hiroz 的建立是同步阻塞的, 放到阻塞线程池里做.
     pub async fn open(endpoint: String, domain: u32) -> Result<Transport, zenoh::Error> {
-        tokio::task::spawn_blocking(move || Self::open_blocking(&endpoint, domain)).await.map_err(|e| e.to_string())?
+        blocking(move || Self::open_blocking(&endpoint, domain)).await
     }
 
     fn open_blocking(endpoint: &str, domain: u32) -> Result<Transport, zenoh::Error> {
@@ -198,7 +233,7 @@ impl Transport {
             .with_qos(qos.to_hiroz())
             // rmw_zenoh_cpp 0.2.11 不认 CPU buffer group: 不入组, token 与线上一致
             .with_buffer_group(hiroz::BufferGroup::Off);
-        tokio::task::spawn_blocking(move || {
+        blocking(move || {
             let queue: Arc<OnceLock<Arc<BoundedQueue<Sample>>>> = Arc::default();
             let drain = Arc::new(Drain { queue: queue.clone(), on_sample, order: Mutex::new(()) });
             let notify = {
@@ -214,7 +249,6 @@ impl Transport {
             Ok(RawSubscriber { _sub: sub })
         })
         .await
-        .map_err(|e| e.to_string())?
     }
 }
 

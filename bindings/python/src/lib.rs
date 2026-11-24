@@ -6,6 +6,7 @@
 mod collect;
 mod publish;
 mod service;
+mod value;
 
 use std::sync::{LazyLock, Mutex, OnceLock};
 use std::time::Duration;
@@ -37,7 +38,7 @@ pub(crate) fn to_py_err(py: Python<'_>, error: Error) -> PyErr {
         Error::Zenoh(_) | Error::Spawn(_) => PyRuntimeError::new_err(message),
         Error::InvalidArgument(_) => PyValueError::new_err(message),
         Error::UnknownType(_) => PyLookupError::new_err(message),
-        Error::Encode(e) => publish::encode_error(py, &e),
+        Error::Encode(e) => value::encode_error(py, &e),
         Error::Decode(_) => PyValueError::new_err(message),
     }
 }
@@ -464,6 +465,7 @@ fn rosz(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<AlignedPair>()?;
     m.add_class::<AlignedFrame>()?;
     m.add_class::<collect::Collector>()?;
+    value::register(m)?;
     publish::register(m)?;
     service::register(m)?;
     Ok(())

@@ -22,7 +22,7 @@ use std::time::Duration;
 use thiserror::Error;
 use tokio::sync::watch;
 
-use crate::transport::{Endpoint, Qos, RawSample, RawSubscriber, Transport};
+use crate::transport::{self, Endpoint, Qos, RawSample, RawSubscriber, Transport};
 use crate::{Registry, Session};
 
 /// 采集订阅的 QoS 深度: hiroz 每到一条即取走, 深度只在订阅建立期间 (transient_local 历史一次到达多条) 兜底,
@@ -165,7 +165,7 @@ impl Session {
                 .map_err(CollectError::Spawn)?
         };
         let (stop, stop_rx) = watch::channel(false);
-        let wanted = topics.iter().map(|t| format!("/{}", t.trim_matches('/'))).collect();
+        let wanted = topics.iter().map(|t| transport::absolute_topic(t)).collect();
         let discovery = Discovery { transport: self.transport().clone(), registry, wanted, shared: shared.clone(), tx };
         let discovery = tokio::spawn(discovery.run(stop_rx));
         Ok(Collector { path, shared, stop: Some(stop), discovery: Some(discovery), writer: Some(writer) })
@@ -464,18 +464,10 @@ impl Discovery {
     /// 要 (重) 订的话题, 每话题一个代表发布端 (有 transient_local 的取它: 订阅时取得到历史):
     /// 清单内有发布端但还没订上的, 以及已按 volatile 订上但现在有 transient_local 发布端的 (重订以补取其历史).
     fn pending(&self, subscribed: &HashMap<String, Subscribed>) -> Vec<(String, Endpoint)> {
-        let mut found: HashMap<String, Endpoint> = HashMap::new();
-        for publisher in self.transport.publishers() {
-            if !self.wanted.contains(&publisher.topic) {
-                continue;
-            }
-            let entry = found.entry(publisher.topic.clone()).or_insert_with(|| publisher.clone());
-            if publisher.qos.transient_local && !entry.qos.transient_local {
-                *entry = publisher;
-            }
-        }
-        found
+        let publishers = self.transport.publishers().into_iter().filter(|p| self.wanted.contains(&p.topic));
+        transport::by_topic(publishers)
             .into_iter()
+            .map(|(topic, (publisher, _))| (topic, publisher))
             .filter(|(topic, publisher)| match subscribed.get(topic) {
                 None => true,
                 Some(current) => publisher.qos.transient_local && !current.transient_local,

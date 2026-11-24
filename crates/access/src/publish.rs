@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use hiroz::Builder as _;
-use hiroz::entity::{EndpointKind, TypeHash, TypeInfo};
+use hiroz::entity::EndpointKind;
 use hiroz::msg::ZMessage;
 use hiroz::pubsub::ZPub;
 
@@ -31,7 +31,7 @@ pub struct QosProfile {
 impl Default for QosProfile {
     /// reliable, volatile, keep_last(10) (同 rclpy 默认)
     fn default() -> Self {
-        QosProfile { reliable: true, transient_local: false, depth: 10 }
+        QosProfile { reliable: true, transient_local: false, depth: transport::DEFAULT_DEPTH }
     }
 }
 
@@ -47,19 +47,14 @@ impl Session {
         let registry = self.registry().clone();
         let unknown = || Error::UnknownType(type_name.into());
         let def_name = registry.get(type_name).ok_or_else(unknown)?.name.clone();
-        let hash = registry.rihs01(&def_name).map_err(|_| unknown())?;
-        let dds_type = hiroz_schema::type_name::dds_from_canonical(&def_name).ok_or_else(unknown)?;
-        let type_info = TypeInfo::new(&dds_type, TypeHash::from_rihs_string(&hash).ok_or_else(unknown)?);
+        let type_info = transport::type_info(&registry, &def_name).ok_or_else(unknown)?;
         let builder = self
             .transport()
             .node()
             .create_pub_impl::<RawBytes>(topic, Some(type_info))
             .with_qos(qos.to_transport().to_hiroz());
         // hiroz 的建立是同步阻塞的
-        let zpub = tokio::task::spawn_blocking(move || builder.build())
-            .await
-            .map_err(|e| Error::Zenoh(e.to_string().into()))?
-            .map_err(Error::Zenoh)?;
+        let zpub = transport::blocking(move || builder.build()).await.map_err(Error::Zenoh)?;
         Ok(Publisher { zpub, type_name: def_name, registry, transport: self.transport().clone() })
     }
 }

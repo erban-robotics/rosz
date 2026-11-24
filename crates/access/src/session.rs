@@ -1,11 +1,10 @@
-use std::collections::HashMap;
 use std::env;
 use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::mpsc;
 
-use crate::transport::{Endpoint, Qos, RawSubscriber, Transport};
+use crate::transport::{self, Endpoint, Qos, RawSubscriber, Transport};
 use crate::{Error, Message, ROUTER_ENV, Registry, TopicInfo, candidates};
 
 const DEFAULT_ROUTER_PORT: u16 = 7447;
@@ -68,16 +67,8 @@ impl Session {
 
     /// 每话题一个代表发布端与汇总信息.
     fn topic_publishers(&self) -> Vec<(TopicInfo, Endpoint)> {
-        let mut by_topic: HashMap<String, (Endpoint, usize)> = HashMap::new();
-        for publisher in self.inner.transport.publishers() {
-            let entry = by_topic.entry(publisher.topic.clone()).or_insert_with(|| (publisher.clone(), 0));
-            entry.1 += 1;
-            // 发布端 durability 不一时以 transient_local 的为代表: 订阅时取得到它缓存的历史, 话题也标静态
-            if publisher.qos.transient_local && !entry.0.qos.transient_local {
-                entry.0 = publisher;
-            }
-        }
-        let mut out: Vec<_> = by_topic
+        // 代表发布端是 transient_local 的话题也标静态
+        let mut out: Vec<_> = transport::by_topic(self.inner.transport.publishers())
             .into_values()
             .map(|(publisher, count)| {
                 let type_name = publisher.ros_type();
@@ -107,7 +98,7 @@ impl Session {
         let known = self.topic_publishers();
         let mut chosen = Vec::new();
         for topic in topics {
-            let normalized = format!("/{}", topic.trim_matches('/'));
+            let normalized = transport::absolute_topic(topic);
             let found = known.iter().find(|(t, _)| t.name == normalized).ok_or_else(|| self.unknown(topic, &known))?;
             chosen.push(found.clone());
         }
