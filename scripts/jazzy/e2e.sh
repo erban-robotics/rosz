@@ -10,6 +10,6 @@ docker cp "$name:/tmp/rosz-e2e" "$work/ref"
 cargo build --release -q -p rosz-cli --manifest-path "$repo/Cargo.toml"
 wheel=$(ls "$repo"/dist/rosz-*-manylinux*_x86_64*.whl | head -1)
 uv venv -q --python 3.12 "$work/venv"
-VIRTUAL_ENV="$work/venv" uv pip install -q "$wheel" pytest pillow
+VIRTUAL_ENV="$work/venv" uv pip install -q "$wheel" pytest pillow mcap==1.4.0
 export ROSZ_JAZZY_CONTAINER="$name" ROSZ_ROUTER=tcp/127.0.0.1:${ROSZ_JAZZY_PORT:-7447} ROSZ_BIN="$repo/target/release/rosz" ROSZ_E2E_REF="$work/ref"
 cd "$work" && PATH="$work/venv/bin:$PATH" python -m pytest -q "$repo/tests/e2e" "$@"

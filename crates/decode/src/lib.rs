@@ -8,6 +8,7 @@ mod hash;
 pub mod media;
 pub mod msg;
 mod registry;
+mod schema;
 pub mod srv;
 mod value;
 
