@@ -164,7 +164,7 @@ if let Some(msg) = session.latest("/joint_states", std::time::Duration::from_sec
 
 ## 浏览器 (WASM)
 
-见 [bindings/wasm/README.md](bindings/wasm/README.md). 解码, zstd, 16 位 PNG 同一个模块, 约 310 KB (gzip 130 KB).
+见 [bindings/wasm/README.md](bindings/wasm/README.md). 解码, zstd, 16 位 PNG 同一个模块, 约 320 KB (gzip 130 KB; `bindings/wasm/build.sh` 未装 wasm-opt 时实测).
 
 ## 仓库布局
 

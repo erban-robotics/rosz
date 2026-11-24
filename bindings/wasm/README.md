@@ -1,6 +1,6 @@
 # @erban-robotics/rosz-wasm
 
-rosz 的浏览器解码模块 (wasm-bindgen `--target web`): 按内置 `.msg` (common_interfaces jazzy + erban 自定义) 解码 ROS 2 CDR, 算 RIHS01, 解压深度.
+rosz 的浏览器解码模块 (wasm-bindgen `--target web`): 按内置 `.msg` (common_interfaces jazzy + audio_common_msgs + erban 自定义) 解码 ROS 2 CDR, 算 RIHS01, 解压深度.
 
 ```js
 import init, { Decoder, decodeDepth } from "@erban-robotics/rosz-wasm";
@@ -12,5 +12,5 @@ const { tree, arrays } = decoder.decode("sensor_msgs/msg/JointState", cdrBytes);
 const depth = decodeDepth("16UC1; zstd", compressedImage.data); // { width, height, data: Uint16Array (毫米) }
 ```
 
-- `decoder.addDefinition(name, text)`: 追加 `.msg`; `decoder.rihs01(name)`; `decoder.undecodableReason(name, hash)`; `decoder.sampleTime(name, cdr)` (Header.stamp, 纳秒 BigInt)
+- `decoder.addDefinition(name, text)`: 追加定义 (`包/msg/类型` 按 `.msg`, `包/srv/类型` 按 `.srv` 解析, 后者登记 `_Request` / `_Response`); `decoder.rihs01(name)`; `decoder.undecodableReason(name, hash)`; `decoder.sampleTime(name, cdr)` (Header.stamp, 纳秒 BigInt)
 - TypedArray 均拷出 WASM 内存, 内存增长后仍有效
