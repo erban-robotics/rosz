@@ -3,6 +3,11 @@
 //! 预期内失败用返回值: 超时为 None, 解不了的消息 `value` 为 None 且 `error` 为原因;
 //! 只有程序错误 (话题不存在, 用法不对) 与连接失败抛异常.
 
+mod collect;
+mod publish;
+mod service;
+mod value;
+
 use std::sync::{LazyLock, Mutex, OnceLock};
 use std::time::Duration;
 
@@ -14,14 +19,14 @@ use rosz_access::{AlignError, Error, Registry, Value};
 
 pyo3::create_exception!(rosz, TopicNotFound, PyLookupError, "话题不存在; `candidates` 为最相近的已知话题");
 
-static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
+pub(crate) static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
     tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().expect("建 tokio 运行时")
 });
 
 /// 阻塞等待时每隔这么久回到 Python 检查一次 Ctrl-C
-const SIGNAL_POLL: Duration = Duration::from_millis(100);
+pub(crate) const SIGNAL_POLL: Duration = Duration::from_millis(100);
 
-fn to_py_err(py: Python<'_>, error: Error) -> PyErr {
+pub(crate) fn to_py_err(py: Python<'_>, error: Error) -> PyErr {
     let message = error.to_string();
     match error {
         Error::UnknownTopic { candidates, .. } => {
@@ -30,7 +35,11 @@ fn to_py_err(py: Python<'_>, error: Error) -> PyErr {
             err
         }
         Error::NoRouter | Error::Connect { .. } => PyConnectionError::new_err(message),
-        Error::Zenoh(_) => PyRuntimeError::new_err(message),
+        Error::Zenoh(_) | Error::Spawn(_) => PyRuntimeError::new_err(message),
+        Error::InvalidArgument(_) => PyValueError::new_err(message),
+        Error::UnknownType(_) => PyLookupError::new_err(message),
+        Error::Encode(e) => value::encode_error(py, &e),
+        Error::Decode(_) => PyValueError::new_err(message),
     }
 }
 
@@ -75,6 +84,20 @@ impl Session {
         Ok(Subscription { inner: Mutex::new(Some(subscription)) })
     }
 
+    /// 开始把 `topics` 采集到 MCAP 文件 `path` (ros2 profile, 覆盖已有文件), 返回 `Collector`.
+    /// 清单里现在没有发布端的话题一上线即订上. `compression`: None / "zstd" / "lz4"; `chunk_size` 字节.
+    #[pyo3(signature = (path, topics, compression=None, chunk_size=None))]
+    fn collect(
+        &self,
+        py: Python<'_>,
+        path: std::path::PathBuf,
+        topics: Vec<String>,
+        compression: Option<String>,
+        chunk_size: Option<u64>,
+    ) -> PyResult<collect::Collector> {
+        collect::start(py, &self.inner, path, topics, compression, chunk_size)
+    }
+
     /// 指定一对已对齐 (视场相同, 分辨率成整数倍) 的深度与彩色话题, 用于按彩色像素查深度.
     fn aligned(&self, py: Python<'_>, depth: String, color: String) -> PyResult<AlignedPair> {
         // 先确认两个话题都在
@@ -88,6 +111,38 @@ impl Session {
             }
         }
         Ok(AlignedPair { session: self.inner.clone(), depth, color })
+    }
+
+    /// 建话题发布端 (仿 rclpy): `msg_type` 为 `包/msg/类型`, 须为内置或 `connect(msg_dirs=...)` 追加的类型;
+    /// `qos_profile` 为 keep_last 深度 (reliable, volatile) 或 `QoSProfile`, 默认 10. 类型未知抛 LookupError.
+    #[pyo3(signature = (msg_type, topic, qos_profile=None))]
+    fn create_publisher(
+        &self,
+        py: Python<'_>,
+        msg_type: &str,
+        topic: &str,
+        qos_profile: Option<publish::QosArg>,
+    ) -> PyResult<publish::Publisher> {
+        publish::create_publisher(py, self, msg_type, topic, qos_profile)
+    }
+
+    /// 建服务端 (仿 rclpy, 无 spin): `callback(request: dict, response: dict) -> dict`, response 为零值应答.
+    /// callback 只在本服务自有的工作线程里跑 (`workers` 个, 默认 1). 失败处理见 README "服务".
+    #[pyo3(signature = (srv_type, srv_name, callback, workers=1))]
+    fn create_service(
+        &self,
+        py: Python<'_>,
+        srv_type: &str,
+        srv_name: &str,
+        callback: Py<PyAny>,
+        workers: usize,
+    ) -> PyResult<service::Service> {
+        service::create_service(py, self, srv_type, srv_name, callback, workers)
+    }
+
+    /// 建通用服务客户端 (仿 rclpy): `client.wait_for_service(timeout_sec)`, `client.call(dict, timeout_sec)`.
+    fn create_client(&self, py: Python<'_>, srv_type: &str, srv_name: &str) -> PyResult<service::Client> {
+        service::create_client(py, self, srv_type, srv_name)
     }
 
     fn __repr__(&self) -> String {
@@ -226,6 +281,11 @@ impl Message {
     fn source_time_ns(&self) -> Option<i64> {
         self.inner.source_time_ns
     }
+    /// 发布端自增序号 (attachment); 无 attachment 为 None
+    #[getter]
+    fn sequence(&self) -> Option<i64> {
+        self.inner.sequence
+    }
     /// 原始 CDR (含 4 字节封装头)
     #[getter]
     fn payload<'py>(&self, py: Python<'py>) -> Bound<'py, pyo3::types::PyBytes> {
@@ -346,7 +406,7 @@ impl AlignedFrame {
     }
 }
 
-fn to_python<'py>(py: Python<'py>, value: &Value) -> PyResult<Bound<'py, PyAny>> {
+pub(crate) fn to_python<'py>(py: Python<'py>, value: &Value) -> PyResult<Bound<'py, PyAny>> {
     macro_rules! array {
         ($v:expr) => {
             PyArray1::from_slice(py, $v).into_any()
@@ -404,5 +464,9 @@ fn rosz(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Message>()?;
     m.add_class::<AlignedPair>()?;
     m.add_class::<AlignedFrame>()?;
+    m.add_class::<collect::Collector>()?;
+    value::register(m)?;
+    publish::register(m)?;
+    service::register(m)?;
     Ok(())
 }

@@ -1,18 +1,31 @@
 //! rosz 接入: 不装 ROS, 直连 Zenoh router 发现与订阅 rmw_zenoh 的 ROS 2 话题, 按内置 `.msg` 解码.
 //!
-//! 第一版只订阅. 对外 API: [`connect`], [`Session::topics`], [`Session::latest`], [`Session::subscribe`].
+//! 对外 API: [`connect`], [`Session::topics`], [`Session::latest`], [`Session::subscribe`], [`Session::create_publisher`],
+//! [`Session::collect`], [`Session::create_service`], [`Session::create_client`].
 //! 预期内失败用返回值 (超时为 `None`, 解不了的消息 [`Message::value`] 返回错误), 只有程序错误与连接失败为 `Err`.
 
+mod collect;
+mod publish;
+mod service;
 mod session;
-pub mod wire;
+mod transport;
 
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub use rosz_decode::media::{AlignError, DepthImage, ImageKind, MediaError, RgbImage};
-pub use rosz_decode::{Decodability, DecodeError, Registry, Value};
+pub use collect::{
+    CollectError, CollectOptions, CollectStats, Collector, Compression, DEFAULT_CHUNK_SIZE, LatencyStats, TopicStats,
+};
+pub use publish::{Publisher, QosProfile};
+pub use service::{
+    Client, FailureKind, HandlerError, QUERY_TIMEOUT, RECEIPT_INTERNAL_ERROR, RECEIPT_INVALID_REQUEST, Service, ServiceFailure,
+    ServiceOptions,
+};
+pub use rosz_decode::{Decodability, DecodeError, EncodeError, Registry, Value};
 pub use session::{Session, Subscription, connect, resolve_router};
 use thiserror::Error;
+use transport::RawSample;
 
 /// 环境变量: router 地址, `--router` 未给时用
 pub const ROUTER_ENV: &str = "ROSZ_ROUTER";
@@ -25,6 +38,19 @@ pub enum Error {
     Connect { router: String, source: zenoh::Error },
     #[error("没有话题 {topic}{}", candidates_hint(.candidates))]
     UnknownTopic { topic: String, candidates: Vec<String> },
+    #[error("没有类型 {0} 的定义 (内置或追加的 .msg 目录里都没有)")]
+    UnknownType(String),
+    #[error(transparent)]
+    Encode(#[from] EncodeError),
+    /// 收到的数据不合定义 (如服务应答)
+    #[error(transparent)]
+    Decode(#[from] DecodeError),
+    /// 参数不合法 (如服务名含非法字符)
+    #[error("{0}")]
+    InvalidArgument(String),
+    /// 建线程失败 (系统资源不足等)
+    #[error("建线程失败: {0}")]
+    Spawn(std::io::Error),
     #[error("zenoh: {0}")]
     Zenoh(zenoh::Error),
 }
@@ -68,6 +94,8 @@ pub struct Message {
     pub sample_time_ns: Option<i64>,
     /// 发布方发出时刻 (attachment), Unix 纳秒
     pub source_time_ns: Option<i64>,
+    /// 发布端自增序号 (attachment), 每个发布端各自从 1 起
+    pub sequence: Option<i64>,
     /// 含 4 字节封装头的 CDR
     pub payload: Vec<u8>,
     pub decodability: Decodability,
@@ -75,14 +103,16 @@ pub struct Message {
 }
 
 impl Message {
-    pub(crate) fn new(topic: &TopicInfo, payload: Vec<u8>, attachment: Option<&[u8]>, registry: Arc<Registry>) -> Self {
+    pub(crate) fn new(topic: &TopicInfo, sample: RawSample, registry: Arc<Registry>) -> Self {
         let decodable = topic.decodability.is_ok();
+        let payload = sample.payload;
         Message {
             topic: topic.name.clone(),
             type_name: topic.type_name.clone(),
-            receive_time_ns: now_ns(),
+            receive_time_ns: sample.receive_time_ns,
             sample_time_ns: decodable.then(|| registry.header_stamp(&topic.type_name, &payload)).flatten(),
-            source_time_ns: attachment.and_then(wire::attachment_source_time),
+            source_time_ns: sample.attachment.map(|a| a.source_time_ns),
+            sequence: sample.attachment.map(|a| a.sequence),
             payload,
             decodability: topic.decodability.clone(),
             registry,

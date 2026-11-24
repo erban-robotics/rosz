@@ -58,6 +58,7 @@ function useRoszWhen(isNeeded: boolean): Rosz | null {
  * - 基座标系: 给了`frame`即用它, 否则为人在下拉里选的 (仍在树里时), 再否则取坐标系最多的那棵树的根
  * - 实时数据源下为这些通道 (含全部坐标变换通道) 设需求窗口, 适配器据此订阅; 面板藏起时清掉. 离线由适配器照常写入
  * - 数据更新只重算变了的通道, 视角不复位; 换了图层或基座标系才重新取景
+ * - 实时数据源下一帧至多重算一次 (TF可达几百Hz), 坐标变换只留各子坐标系最新的一条 (播放头总在最新处, 旧的画不到)
  */
 export function Scene3dView({
   channels,
@@ -106,7 +107,8 @@ export function Scene3dView({
   useEffect(() => () => state.setDemand(panelId, null), [state, panelId])
 
   const rosz = useRoszWhen(usedChannels.some((channel) => rosSpatialKind(channel.type) !== null))
-  useChannels(state, ids)
+  // 实时TF可达几百Hz, 每条都重渲 (每次重算都扫一遍保留的样本) 主线程跟不上: 一帧至多重算一次
+  useChannels(state, ids, { perFrame: isLive })
   const versions = ids.map((id) => state.version(id)).join(',')
   // 按通道缓存换算结果: 只有数据 (版本号), 目录项, 时间轴或解码模块变了的通道重算
   const builds = useMemo(() => {
@@ -116,14 +118,15 @@ export function Scene3dView({
           const stamp = `${state.version(channel.id)}\n${axis}\n${rosz !== null}`
           const cached = cache.get(channel.id)
           if (cached && cached.stamp === stamp && cached.info === channel) return [channel.id, cached.build]
-          const build = buildSceneLayer(channel, state.samplesIn(channel.id, WHOLE_TIMELINE), { axis, zero, rosz })
+          const samples = state.samplesIn(channel.id, WHOLE_TIMELINE)
+          const build = buildSceneLayer(channel, samples, { axis, zero, rosz, latestOnly: isLive })
           cache.set(channel.id, { stamp, info: channel, build })
           return [channel.id, build]
         }),
     )
     // versions变即通道数据变了, 须重取
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [usedChannels, state, zero, axis, rosz, versions])
+  }, [usedChannels, state, zero, axis, rosz, isLive, versions])
 
   const layers = useMemo(
     () => spatialChannels.flatMap((channel) => builds.get(channel.id)?.layer ?? []),

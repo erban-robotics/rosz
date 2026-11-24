@@ -4,7 +4,7 @@ set -euo pipefail
 name=${1:-rosz-jazzy}
 repo=$(cd "$(dirname "$0")/../.." && pwd)
 docker exec "$name" bash -c '
-set -e; source /opt/ros/jazzy/setup.bash; source /ws/install/share/hand/local_setup.bash
+set -e; source /env.sh
 rm -rf /tmp/golden
 for rmw in rmw_zenoh_cpp rmw_fastrtps_cpp; do RMW_IMPLEMENTATION=$rmw python3 /rosz/scripts/jazzy/golden.py /tmp/golden; done'
 rm -rf "$repo/messages/golden"

@@ -1,6 +1,6 @@
 [package]
 name = "rosz-decode"
-description = "按 .msg 定义解码 ROS 2 (XCDR1) 消息, 计算 RIHS01, 解码相机图像与深度"
+description = "按 .msg 定义解码与编码 ROS 2 (XCDR1) 消息, 计算 RIHS01, 解码相机图像与深度"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -97,14 +97,26 @@ function convert(kind: SpatialKind, channel: ChannelInfo, payload: Record<string
   return { points: { frame: ownFrame, positions: packPoints(points), colors: null, total: points.length } }
 }
 
+// 坐标变换只留各子坐标系时刻最晚的一条, 每条一个样本, 按时刻升序
+function latestPerChild(converted: { time: number; content: Content }[]) {
+  const latest = new Map<string, { time: number; content: Content }>()
+  for (const { time, content } of converted)
+    for (const edge of (content as { transforms: TransformEdge[] }).transforms) {
+      const known = latest.get(edge.child)
+      if (!known || time >= known.time) latest.set(edge.child, { time, content: { transforms: [edge] } })
+    }
+  return [...latest.values()]
+}
+
 /**
  * 一个空间通道的样本 -> 场景图层. `rosz`为已加载的解码模块, 没加载完时CDR样本先跳过 (`isWaitingDecoder`为true).
- * 解不了或形状不对的样本跳过, 原因记入`issue`. 没有可画的样本时`layer`为null
+ * 解不了或形状不对的样本跳过, 原因记入`issue`. 没有可画的样本时`layer`为null.
+ * `latestOnly` (实时用, 播放头总在最新处): 坐标变换只留各子坐标系最新的一条, 其余种类只留最新一条, 图层的大小不随保留的样本数涨
  */
 export function buildSceneLayer(
   channel: ChannelInfo,
   samples: Sample[],
-  { axis, zero, rosz }: { axis: TimeAxis; zero: bigint; rosz: Rosz | null },
+  { axis, zero, rosz, latestOnly = false }: { axis: TimeAxis; zero: bigint; rosz: Rosz | null; latestOnly?: boolean },
 ): { layer: SceneLayer | null; issue: string | null; isWaitingDecoder: boolean } {
   const kind = spatialKindOf(channel)
   if (!kind) return { layer: null, issue: `未知的空间种类${channel.type ?? ''}`, isWaitingDecoder: false }
@@ -112,7 +124,7 @@ export function buildSceneLayer(
   const key = `${channel.type}\n${properties.frame ?? ''}\n${properties.childFrame ?? ''}\n${channel.name}`
   let issue: string | null = null
   let isWaitingDecoder = false
-  const converted: { time: number; content: Content }[] = []
+  let converted: { time: number; content: Content }[] = []
   for (const sample of samples) {
     const payload = sample.payload as Record<string, unknown>
     if (typeof payload !== 'object' || payload === null) continue
@@ -141,6 +153,13 @@ export function buildSceneLayer(
         ? ownTime
         : secondsAt(zero, onAxis(axis, sample.receiveTime, sample.sampleTime) ?? sample.receiveTime)
     converted.push({ time, content: cached.content })
+  }
+  if (latestOnly && converted.length > 1) {
+    if (kind === 'transform') converted = latestPerChild(converted)
+    else {
+      const latest = converted.reduce((first, second) => (second.time >= first.time ? second : first))
+      converted = [latest]
+    }
   }
   converted.sort((first, second) => first.time - second.time)
   if (converted.length === 0) return { layer: null, issue, isWaitingDecoder }

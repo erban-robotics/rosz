@@ -4,8 +4,8 @@ build-backend = "maturin"
 
 [project]
 name = "rosz"
-description = "不装 ROS, 直连 Zenoh 读取 ROS 2 (rmw_zenoh) 话题: 图像为 numpy, 消息为 dict"
-requires-python = ">=3.10"
+description = "不装 ROS, 直连 Zenoh 读取与发布 ROS 2 (rmw_zenoh) 话题: 图像为 numpy, 消息为 dict"
+requires-python = ">=3.8"
 dependencies = ["numpy>=1.21"]
 dynamic = ["version"]
 readme = "README.md"

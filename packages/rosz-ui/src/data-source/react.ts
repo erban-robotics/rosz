@@ -16,16 +16,33 @@ export function useDataSource() {
   return value
 }
 
-// 这些通道的数据 (样本段, 错误) 一变即重渲; 只订阅不取值, 取值在渲染里直接查状态
-export function useChannels(state: DataSourceState, channels: string[]) {
+/**
+ * 这些通道的数据 (样本段, 错误) 一变即重渲; 只订阅不取值, 取值在渲染里直接查状态.
+ * `perFrame`为true时一帧内的多次变化合成一次重渲 (下一个动画帧): 给每次重渲都要扫一遍样本的面板跟高频实时话题用
+ * (如3D场景跟几百Hz的TF, 每条都重渲即主线程跟不上)
+ */
+export function useChannels(state: DataSourceState, channels: string[], { perFrame = false }: { perFrame?: boolean } = {}) {
   const key = channels.join('\n')
   const subscribe = useCallback(
     (listener: () => void) => {
+      let frame: number | null = null
+      const notify = perFrame
+        ? () => {
+            if (frame !== null) return
+            frame = requestAnimationFrame(() => {
+              frame = null
+              listener()
+            })
+          }
+        : listener
       // 空列表即不订阅 (`''.split`会得到一个空名通道)
-      const unsubscribes = key === '' ? [] : key.split('\n').map((channel) => state.subscribe(channel, listener))
-      return () => unsubscribes.forEach((unsubscribe) => unsubscribe())
+      const unsubscribes = key === '' ? [] : key.split('\n').map((channel) => state.subscribe(channel, notify))
+      return () => {
+        if (frame !== null) cancelAnimationFrame(frame)
+        unsubscribes.forEach((unsubscribe) => unsubscribe())
+      }
     },
-    [state, key],
+    [state, key, perFrame],
   )
   useSyncExternalStore(subscribe, () =>
     key

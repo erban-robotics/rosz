@@ -16,13 +16,14 @@ pub struct Decoder {
 
 #[wasm_bindgen]
 impl Decoder {
-    /// 含全部内置类型 (common_interfaces jazzy + erban 自定义).
+    /// 含全部内置类型 (common_interfaces jazzy + audio_common_msgs + erban 自定义).
     #[wasm_bindgen(constructor)]
     pub fn new() -> Decoder {
         Decoder { registry: Registry::builtin() }
     }
 
-    /// 追加一条 `.msg` 定义, `name` 为 `包/msg/类型`.
+    /// 追加一条定义: `name` 为 `包/msg/类型` 时 `text` 按 `.msg` 解析; 为 `包/srv/类型` 时按 `.srv` 解析,
+    /// 登记 `类型_Request`, `类型_Response` (可解码) 与只用于算 hash 的 `类型_Event`, `类型`.
     #[wasm_bindgen(js_name = addDefinition)]
     pub fn add_definition(&mut self, name: &str, text: &str) -> Result<(), JsError> {
         self.registry.add(name, text).map_err(|e| JsError::new(&e.to_string()))

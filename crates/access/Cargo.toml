@@ -1,6 +1,6 @@
 [package]
 name = "rosz-access"
-description = "不装 ROS, 直连 Zenoh 发现与订阅 rmw_zenoh 的 ROS 2 话题"
+description = "不装 ROS, 直连 Zenoh 发现, 订阅与发布 rmw_zenoh 的 ROS 2 话题"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,6 +10,15 @@ repository.workspace = true
 rosz-decode = { workspace = true, features = ["jpeg"] }
 thiserror.workspace = true
 zenoh.workspace = true
-zenoh-ext.workspace = true
+# rmw_zenoh 线协议 (keyexpr, liveliness, attachment, transient_local) 由 hiroz 实现; zenoh 同为 =1.9.0
+# rmw: hiroz 的 notifier 式订阅 (回调里取 Sample, 拿得到 attachment)
+hiroz = { version = "=0.2.1", default-features = false, features = ["jazzy", "rmw-zenoh", "rmw"] }
+hiroz-protocol = { version = "=0.2.1", default-features = false }
+hiroz-schema = "=0.2.1"
 tokio.workspace = true
 strsim = "0.11"
+serde_json.workspace = true
+# 服务端失败默认记 warn (hiroz 已依赖)
+tracing = "0.1"
+# 采集写 MCAP (ros2 profile), chunk 压缩可选 zstd / lz4
+mcap = { version = "0.26", default-features = false, features = ["zstd", "lz4"] }

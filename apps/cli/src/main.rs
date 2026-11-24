@@ -1,5 +1,6 @@
 //! `rosz`: 不装 ROS 查看与采集 ROS 2 话题. 终端里为人读格式, 管道或 `--json` 时为结构固定的 JSON.
 
+mod collect;
 mod format;
 mod snapshot;
 mod stats;
@@ -69,6 +70,26 @@ enum Command {
         #[arg(long, default_value_t = 3.0)]
         seconds: f64,
     },
+    /// 按话题清单录 MCAP (ros2 profile): 还没上线的话题一上线即订上, 到时长或 Ctrl-C 停止并封口, 输出每话题统计
+    Collect {
+        #[arg(required = true)]
+        topics: Vec<String>,
+        /// 输出文件 (默认 ./rosz-collect-<时刻>.mcap)
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// 录这么多秒后停止 (默认直到 Ctrl-C / SIGTERM)
+        #[arg(long)]
+        seconds: Option<f64>,
+        /// chunk 压缩: none, zstd, lz4
+        #[arg(long, default_value = "none")]
+        compression: rosz_access::Compression,
+        /// chunk 大小 (字节)
+        #[arg(long, default_value_t = rosz_access::DEFAULT_CHUNK_SIZE)]
+        chunk_size: u64,
+        /// 每隔这么多秒输出一次统计 (默认只在结束时输出)
+        #[arg(long)]
+        stats_interval: Option<f64>,
+    },
     /// 查看器: 以浏览器独立窗口打开 (话题树 + 图像面板), 关窗即退出
     View {
         /// 本机监听端口 (只听 127.0.0.1; 默认 7450, 被占用时随机)
@@ -112,6 +133,11 @@ impl From<Error> for Failure {
             Error::Connect { .. } => "connect",
             Error::UnknownTopic { .. } => "unknown_topic",
             Error::Zenoh(_) => "zenoh",
+            Error::InvalidArgument(_) => "invalid_argument",
+            Error::Spawn(_) => "spawn",
+            Error::UnknownType(_) => "unknown_type",
+            Error::Encode(_) => "encode",
+            Error::Decode(_) => "decode",
         };
         let candidates = match &error {
             Error::UnknownTopic { candidates, .. } => candidates.clone(),
@@ -154,6 +180,17 @@ async fn run(cli: Cli, output: Output) -> Result<ExitCode, Failure> {
         Command::Echo { topic, count, timeout } => echo(&session, output, &topic, count, seconds(timeout)).await,
         Command::Snapshot { topics, out, timeout } => snapshot::run(&session, output, topics, out, seconds(timeout)).await,
         Command::Stats { topics, seconds: s } => stats::run(&session, output, &topics, seconds(s)).await,
+        Command::Collect { topics, out, seconds: s, compression, chunk_size, stats_interval } => {
+            let args = collect::Args {
+                topics,
+                out,
+                seconds: s.map(seconds),
+                compression,
+                chunk_size,
+                stats_interval: stats_interval.map(seconds),
+            };
+            collect::run(&session, output, args).await
+        }
         Command::View { port, no_open } => rosz_view::run(session, rosz_view::Options { port, open: !no_open })
             .await
             .map(|()| ExitCode::SUCCESS)
