@@ -1,4 +1,4 @@
-# 推 vX.Y.Z tag: 构建 Python wheel (x86_64 + aarch64, abi3), WASM 与 rosz-ui 的 npm tgz, CLI 静态二进制 (musl), 挂到 GitHub Release.
+# 推 vX.Y.Z tag: 构建 Python wheel (x86_64 + aarch64, abi3, py3.8+), WASM 与 rosz-ui 的 npm tgz, CLI 静态二进制 (musl), 挂到 GitHub Release.
 # 只用 GitHub 托管 runner (公开仓库下 fork PR 可在自托管 runner 上执行代码, 不用 .99)
 name: release
 on:
@@ -65,6 +65,13 @@ jobs:
         run: |
           pip install dist/*_${{ matrix.arch }}.whl
           python -c "import rosz; print(rosz.__version__)"
+      # 最低目标: Ubuntu 20.04 (ROS1 Noetic 同底, glibc 2.31) 的系统 python3.8
+      - name: Ubuntu 20.04 系统 python3.8 装 wheel 并导入
+        run: |
+          docker run --rm -v "$PWD/dist:/dist:ro" ubuntu:20.04 bash -euc '
+            apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3-pip >/dev/null
+            python3 -m pip install -q /dist/*_${{ matrix.arch }}.whl
+            python3 -c "import rosz; print(rosz.__version__)"'
 
   # npm 产物 (WASM tgz, rosz-ui tgz) 与查看器前端: 同一 npm workspace, rosz-ui 与查看器用本地 WASM 包
   web:

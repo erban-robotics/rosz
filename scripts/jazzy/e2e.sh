@@ -2,7 +2,7 @@
 # 互通测试: 先 scripts/jazzy/setup.sh 与 scripts/jazzy/start.sh 起容器与发布端, 再跑本脚本.
 # 在无 ROS 的干净 venv 里装 rosz wheel, 连容器内 rmw_zenohd (宿主网络, 端口取 ROSZ_JAZZY_PORT, 默认 7447).
 set -euo pipefail
-name=${1:-rosz-jazzy}
+name=${1:-rosz-jazzy}; shift $(($# > 0))   # 余下参数交给 pytest
 repo=$(cd "$(dirname "$0")/../.." && pwd)
 work=${ROSZ_E2E_DIR:-/tmp/rosz-e2e}
 rm -rf "$work" && mkdir -p "$work"

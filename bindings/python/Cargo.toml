@@ -14,5 +14,8 @@ crate-type = ["cdylib"]
 [dependencies]
 rosz-access.workspace = true
 tokio.workspace = true
-pyo3 = { version = "0.30", features = ["abi3-py310", "extension-module"] }
-numpy = "0.30"
+# pyo3 钉 0.29 (支持 py3.8 的最后一版, 0.30 起最低 3.9): erban-caring robot_state 跑在 ROS1 Noetic
+# (Ubuntu 20.04 系统 python3.8), 与 rospy 同进程 import rosz. abi3-py38 一个 wheel 覆盖 3.8+.
+# 升 pyo3/numpy 前先确认不再有 py3.8 使用方 (票 06).
+pyo3 = { version = "0.29", features = ["abi3-py38", "extension-module"] }
+numpy = "0.29"
