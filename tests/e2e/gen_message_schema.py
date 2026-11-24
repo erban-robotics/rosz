@@ -11,7 +11,7 @@ import sys
 import types
 from pathlib import Path
 
-# 采集互通测试录到的类型, 加上 webapp 录制话题的其余类型 (audio_common_msgs 除外: rosz 不内置)
+# 采集互通测试录到的类型, 加上 webapp 录制话题的其余类型 (mpc_hardware_interface/msg/Joints 除外: 原录制器类型库也没有, 同样留空)
 TYPES = [
     "sensor_msgs/msg/JointState",
     "std_msgs/msg/String",
@@ -22,6 +22,9 @@ TYPES = [
     "sensor_msgs/msg/CameraInfo",
     "geometry_msgs/msg/WrenchStamped",
     "geometry_msgs/msg/PoseStamped",
+    "std_msgs/msg/Float32MultiArray",
+    "audio_common_msgs/msg/AudioDataStamped",
+    "audio_common_msgs/msg/AudioInfo",
 ]
 
 

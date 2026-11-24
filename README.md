@@ -1,6 +1,6 @@
 # rosz
 
-不装 ROS 即可读取 ROS 2 (rmw_zenoh) 话题: 直连 Zenoh router, 靠 liveliness token 发现话题, 按内置 `.msg` / `.srv` (common_interfaces jazzy 全套 + erban 自定义) 通用解码, 并解码 JPEG 与深度 (`16UC1; zstd`, `16UC1; compressedDepth`). 同一份 Rust 代码出 Rust 库, Python wheel, 浏览器 WASM 与 `rosz` 命令行; 另有共享可视化 UI 包 rosz-ui (`packages/rosz-ui`, ADP, erban-caring webapp 与查看器共用).
+不装 ROS 即可读取 ROS 2 (rmw_zenoh) 话题: 直连 Zenoh router, 靠 liveliness token 发现话题, 按内置 `.msg` / `.srv` (common_interfaces jazzy 全套 + audio_common_msgs + erban 自定义) 通用解码, 并解码 JPEG 与深度 (`16UC1; zstd`, `16UC1; compressedDepth`). 同一份 Rust 代码出 Rust 库, Python wheel, 浏览器 WASM 与 `rosz` 命令行; 另有共享可视化 UI 包 rosz-ui (`packages/rosz-ui`, ADP, erban-caring webapp 与查看器共用).
 
 支持订阅, 发布, 采集写 MCAP, 服务的 server 与 client (不含 action). 传输层建在 hiroz 0.2.1 之上 (rmw_zenoh 线协议, 按类型名 + hash 的原始订阅与 ROS 图; zenoh 钉 1.9.0, 与现场 rmw_zenoh_cpp 0.2.11 / router 1.7.2 互通), 以 client 模式连 router.
 
