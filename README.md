@@ -2,7 +2,7 @@
 
 不装 ROS 即可读取 ROS 2 (rmw_zenoh) 话题: 直连 Zenoh router, 靠 liveliness token 发现话题, 按内置 `.msg` (common_interfaces jazzy 全套 + erban 自定义) 通用解码, 并解码 JPEG 与深度 (`16UC1; zstd`, `16UC1; compressedDepth`). 同一份 Rust 代码出 Rust 库, Python wheel, 浏览器 WASM 与 `rosz` 命令行; 另有共享可视化 UI 包 rosz-ui (`packages/rosz-ui`, ADP, erban-caring webapp 与查看器共用).
 
-第一版只订阅, 不发布不调服务; 传输层直接用 `zenoh` crate 与自写的 rmw_zenoh 订阅端 (与现场 rmw_zenoh_cpp 0.2.11 对齐). 以后加发布与服务时, 传输层建在 hiroz 之上.
+第一版只订阅, 不发布不调服务. 传输层建在 hiroz 0.2.1 之上 (rmw_zenoh 线协议, 按类型名 + hash 的原始订阅与 ROS 图; zenoh 钉 1.9.0, 与现场 rmw_zenoh_cpp 0.2.11 / router 1.7.2 互通), 以 client 模式连 router.
 
 ## 安装
 
@@ -16,7 +16,7 @@
 
 ## router 地址
 
-`--router` (Python 为 `connect(router=...)`) 优先, 其次环境变量 `ROSZ_ROUTER`, 都没有则报错; 不内置默认地址. 写法 `tcp/192.168.1.10:7447`, `192.168.1.10:7447` 或 `192.168.1.10` (端口默认 7447). ROS domain 取 `ROS_DOMAIN_ID` (默认 0).
+`--router` (Python 为 `connect(router=...)`) 优先, 其次环境变量 `ROSZ_ROUTER`, 都没有则报错; 不内置默认地址. 写法 `tcp/192.168.1.10:7447`, `192.168.1.10:7447` 或 `192.168.1.10` (端口默认 7447). ROS domain 取 `ROS_DOMAIN_ID` (默认 0). 环境变量 `ZENOH_CONFIG_OVERRIDE` (与 rmw_zenoh 同写法, `键=值;键=值`) 会叠加到连接配置上.
 
 ## 命令行
 

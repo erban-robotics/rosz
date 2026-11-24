@@ -4,7 +4,7 @@
 //! 预期内失败用返回值 (超时为 `None`, 解不了的消息 [`Message::value`] 返回错误), 只有程序错误与连接失败为 `Err`.
 
 mod session;
-pub mod wire;
+mod transport;
 
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -13,6 +13,7 @@ pub use rosz_decode::media::{AlignError, DepthImage, ImageKind, MediaError, RgbI
 pub use rosz_decode::{Decodability, DecodeError, Registry, Value};
 pub use session::{Session, Subscription, connect, resolve_router};
 use thiserror::Error;
+use transport::RawSample;
 
 /// 环境变量: router 地址, `--router` 未给时用
 pub const ROUTER_ENV: &str = "ROSZ_ROUTER";
@@ -75,14 +76,15 @@ pub struct Message {
 }
 
 impl Message {
-    pub(crate) fn new(topic: &TopicInfo, payload: Vec<u8>, attachment: Option<&[u8]>, registry: Arc<Registry>) -> Self {
+    pub(crate) fn new(topic: &TopicInfo, sample: RawSample, registry: Arc<Registry>) -> Self {
         let decodable = topic.decodability.is_ok();
+        let payload = sample.payload;
         Message {
             topic: topic.name.clone(),
             type_name: topic.type_name.clone(),
-            receive_time_ns: now_ns(),
+            receive_time_ns: sample.receive_time_ns,
             sample_time_ns: decodable.then(|| registry.header_stamp(&topic.type_name, &payload)).flatten(),
-            source_time_ns: attachment.and_then(wire::attachment_source_time),
+            source_time_ns: sample.attachment.map(|a| a.source_time_ns),
             payload,
             decodability: topic.decodability.clone(),
             registry,
