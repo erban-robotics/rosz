@@ -37,11 +37,14 @@ pub async fn run(session: &Session, output: Output, args: Args) -> Result<ExitCo
         }
     };
     tokio::pin!(deadline);
+    // 只建一次: 每轮新建的话, 打印统计期间到的信号没有监听者, 会丢
+    let shutdown = shutdown_signal();
+    tokio::pin!(shutdown);
     let mut ticker = args.stats_interval.map(|i| tokio::time::interval_at(tokio::time::Instant::now() + i, i));
     loop {
         tokio::select! {
             _ = &mut deadline => break,
-            _ = shutdown_signal() => break,
+            _ = &mut shutdown => break,
             _ = async { ticker.as_mut().unwrap().tick().await }, if ticker.is_some() => {
                 print_stats(output, &collector.stats(), false);
             }
@@ -52,11 +55,18 @@ pub async fn run(session: &Session, output: Output, args: Args) -> Result<ExitCo
     Ok(ExitCode::SUCCESS)
 }
 
-async fn shutdown_signal() {
-    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).ok();
-    tokio::select! {
-        _ = tokio::signal::ctrl_c() => {}
-        _ = async { terminate.as_mut().unwrap().recv().await }, if terminate.is_some() => {}
+/// SIGINT 或 SIGTERM 到达即完成. 监听在调用时即登记 (不等首次 poll), 之后到的信号都不会漏.
+fn shutdown_signal() -> impl Future<Output = ()> {
+    use tokio::signal::unix::{SignalKind, signal};
+    let mut interrupt = signal(SignalKind::interrupt()).ok();
+    let mut terminate = signal(SignalKind::terminate()).ok();
+    async move {
+        tokio::select! {
+            _ = async { interrupt.as_mut().unwrap().recv().await }, if interrupt.is_some() => {}
+            _ = async { terminate.as_mut().unwrap().recv().await }, if terminate.is_some() => {}
+            // 两个都登记不上: 只能靠时长结束
+            else => std::future::pending().await,
+        }
     }
 }
 

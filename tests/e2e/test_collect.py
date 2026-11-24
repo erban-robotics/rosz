@@ -7,6 +7,7 @@ schema 对照 message_schema.json 由 gen_message_schema.py 从 erban-caring 录
 
 import json
 import os
+import signal
 import struct
 import subprocess
 import time
@@ -164,3 +165,20 @@ def test_cli_collect(tmp_path):
         90 < len(messages["/joint_states"]) < 110,
         len(messages["/tf_static"]),
     ) == (True, True, 1)
+
+
+def test_cli_collect_stops_on_sigint_while_printing_stats(tmp_path):
+    """统计打印得很频繁时 Ctrl-C 也不丢: 收到即封口退出, 输出最终统计."""
+    command = [os.environ["ROSZ_BIN"], "--json", "collect", "/joint_states", "--out", str(tmp_path / "sigint.mcap")]
+    exits = []
+    for _ in range(5):
+        process = subprocess.Popen([*command, "--stats-interval", "0.0005"], stdout=subprocess.PIPE, text=True)
+        time.sleep(1)
+        process.send_signal(signal.SIGINT)
+        try:
+            stdout, _ = process.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            stdout, _ = process.communicate()
+        exits.append((process.returncode, "/joint_states" in stdout.splitlines()[-1]))
+    assert exits == [(0, True)] * 5
