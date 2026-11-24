@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # 起一次性 jazzy 容器 (rmw_zenoh_cpp 0.2.11, 与现场同版本), 供金样本生成与互通测试用. 不连机器人.
-# 用法: scripts/jazzy/setup.sh [容器名]; 用完 `docker rm -f <容器名>`
+# 用法: [ROSZ_JAZZY_PORT=7447] scripts/jazzy/setup.sh [容器名]; 用完 `docker rm -f <容器名>`
+# 宿主网络, router 端口取 ROSZ_JAZZY_PORT (默认 7447), 端口不同的容器可并行互不串扰.
+# 容器内 `source /env.sh` 即 ROS 环境 + 节点连本容器 router.
 set -euo pipefail
 name=${1:-rosz-jazzy}
+port=${ROSZ_JAZZY_PORT:-7447}
 repo=$(cd "$(dirname "$0")/../.." && pwd)
 # apt 源换成 2026-10-05 的 ROS 快照: 其中 rmw_zenoh_cpp 为 0.2.11 (现行源已是更高版本)
 snapshot=http://snapshots.ros.org/jazzy/2026-10-05/ubuntu
@@ -40,5 +43,11 @@ ament_package()
 CMAKE
 set +u; source /opt/ros/jazzy/setup.bash; set -u
 cd /ws/src/hand && cmake -S . -B /ws/build -DCMAKE_INSTALL_PREFIX=/ws/install >/dev/null && cmake --build /ws/build -j8 >/dev/null && cmake --install /ws/build >/dev/null
+cat > /env.sh <<ENV
+source /opt/ros/jazzy/setup.bash
+source /ws/install/share/hand/local_setup.bash
+export RMW_IMPLEMENTATION=rmw_zenoh_cpp ROSZ_JAZZY_PORT=$port
+export ZENOH_CONFIG_OVERRIDE='connect/endpoints=[\"tcp/localhost:$port\"]'
+ENV
 "
-echo "容器 $name 就绪; 进入环境: docker exec -it $name bash -c 'source /ws/install/share/hand/local_setup.bash 2>/dev/null; source /opt/ros/jazzy/setup.bash; bash'"
+echo "容器 $name 就绪 (router 端口 $port); 进入环境: docker exec -it $name bash -c 'source /env.sh; bash'"
