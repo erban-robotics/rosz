@@ -135,6 +135,7 @@ impl From<Error> for Failure {
             Error::Zenoh(_) => "zenoh",
             Error::UnknownType(_) => "unknown_type",
             Error::Encode(_) => "encode",
+            Error::Decode(_) => "decode",
         };
         let candidates = match &error {
             Error::UnknownTopic { candidates, .. } => candidates.clone(),

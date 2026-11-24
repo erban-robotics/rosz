@@ -5,6 +5,7 @@
 
 mod collect;
 mod publish;
+mod service;
 
 use std::sync::{LazyLock, Mutex, OnceLock};
 use std::time::Duration;
@@ -22,7 +23,7 @@ pub(crate) static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| 
 });
 
 /// 阻塞等待时每隔这么久回到 Python 检查一次 Ctrl-C
-const SIGNAL_POLL: Duration = Duration::from_millis(100);
+pub(crate) const SIGNAL_POLL: Duration = Duration::from_millis(100);
 
 pub(crate) fn to_py_err(py: Python<'_>, error: Error) -> PyErr {
     let message = error.to_string();
@@ -36,6 +37,7 @@ pub(crate) fn to_py_err(py: Python<'_>, error: Error) -> PyErr {
         Error::Zenoh(_) => PyRuntimeError::new_err(message),
         Error::UnknownType(_) => PyLookupError::new_err(message),
         Error::Encode(e) => publish::encode_error(py, &e),
+        Error::Decode(_) => PyValueError::new_err(message),
     }
 }
 
@@ -120,6 +122,25 @@ impl Session {
         qos_profile: Option<publish::QosArg>,
     ) -> PyResult<publish::Publisher> {
         publish::create_publisher(py, self, msg_type, topic, qos_profile)
+    }
+
+    /// 建服务端 (仿 rclpy, 无 spin): `callback(request: dict, response: dict) -> dict`, response 为零值应答.
+    /// callback 只在本服务自有的工作线程里跑 (`workers` 个, 默认 1). 失败处理见 README "服务".
+    #[pyo3(signature = (srv_type, srv_name, callback, workers=1))]
+    fn create_service(
+        &self,
+        py: Python<'_>,
+        srv_type: &str,
+        srv_name: &str,
+        callback: Py<PyAny>,
+        workers: usize,
+    ) -> PyResult<service::Service> {
+        service::create_service(py, self, srv_type, srv_name, callback, workers)
+    }
+
+    /// 建通用服务客户端 (仿 rclpy): `client.wait_for_service(timeout_sec)`, `client.call(dict, timeout_sec)`.
+    fn create_client(&self, py: Python<'_>, srv_type: &str, srv_name: &str) -> PyResult<service::Client> {
+        service::create_client(py, self, srv_type, srv_name)
     }
 
     fn __repr__(&self) -> String {
@@ -383,7 +404,7 @@ impl AlignedFrame {
     }
 }
 
-fn to_python<'py>(py: Python<'py>, value: &Value) -> PyResult<Bound<'py, PyAny>> {
+pub(crate) fn to_python<'py>(py: Python<'py>, value: &Value) -> PyResult<Bound<'py, PyAny>> {
     macro_rules! array {
         ($v:expr) => {
             PyArray1::from_slice(py, $v).into_any()
@@ -443,5 +464,6 @@ fn rosz(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<AlignedFrame>()?;
     m.add_class::<collect::Collector>()?;
     publish::register(m)?;
+    service::register(m)?;
     Ok(())
 }

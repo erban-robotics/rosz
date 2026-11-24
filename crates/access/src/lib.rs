@@ -1,11 +1,12 @@
 //! rosz 接入: 不装 ROS, 直连 Zenoh router 发现与订阅 rmw_zenoh 的 ROS 2 话题, 按内置 `.msg` 解码.
 //!
 //! 对外 API: [`connect`], [`Session::topics`], [`Session::latest`], [`Session::subscribe`], [`Session::create_publisher`],
-//! [`Session::collect`].
+//! [`Session::collect`], [`Session::create_service`], [`Session::create_client`].
 //! 预期内失败用返回值 (超时为 `None`, 解不了的消息 [`Message::value`] 返回错误), 只有程序错误与连接失败为 `Err`.
 
 mod collect;
 mod publish;
+mod service;
 mod session;
 mod transport;
 
@@ -17,6 +18,10 @@ pub use collect::{
     CollectError, CollectOptions, CollectStats, Collector, Compression, DEFAULT_CHUNK_SIZE, LatencyStats, TopicStats,
 };
 pub use publish::{Publisher, QosProfile};
+pub use service::{
+    Client, FailureKind, HandlerError, QUERY_TIMEOUT, RECEIPT_INTERNAL_ERROR, RECEIPT_INVALID_REQUEST, Service, ServiceFailure,
+    ServiceOptions,
+};
 pub use rosz_decode::{Decodability, DecodeError, EncodeError, Registry, Value};
 pub use session::{Session, Subscription, connect, resolve_router};
 use thiserror::Error;
@@ -37,6 +42,9 @@ pub enum Error {
     UnknownType(String),
     #[error(transparent)]
     Encode(#[from] EncodeError),
+    /// 收到的数据不合定义 (如服务应答)
+    #[error(transparent)]
+    Decode(#[from] DecodeError),
     #[error("zenoh: {0}")]
     Zenoh(zenoh::Error),
 }

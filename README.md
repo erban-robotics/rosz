@@ -1,8 +1,8 @@
 # rosz
 
-不装 ROS 即可读取 ROS 2 (rmw_zenoh) 话题: 直连 Zenoh router, 靠 liveliness token 发现话题, 按内置 `.msg` (common_interfaces jazzy 全套 + erban 自定义) 通用解码, 并解码 JPEG 与深度 (`16UC1; zstd`, `16UC1; compressedDepth`). 同一份 Rust 代码出 Rust 库, Python wheel, 浏览器 WASM 与 `rosz` 命令行; 另有共享可视化 UI 包 rosz-ui (`packages/rosz-ui`, ADP, erban-caring webapp 与查看器共用).
+不装 ROS 即可读取 ROS 2 (rmw_zenoh) 话题: 直连 Zenoh router, 靠 liveliness token 发现话题, 按内置 `.msg` / `.srv` (common_interfaces jazzy 全套 + erban 自定义) 通用解码, 并解码 JPEG 与深度 (`16UC1; zstd`, `16UC1; compressedDepth`). 同一份 Rust 代码出 Rust 库, Python wheel, 浏览器 WASM 与 `rosz` 命令行; 另有共享可视化 UI 包 rosz-ui (`packages/rosz-ui`, ADP, erban-caring webapp 与查看器共用).
 
-支持订阅, 发布与采集写 MCAP, 暂不调服务. 传输层建在 hiroz 0.2.1 之上 (rmw_zenoh 线协议, 按类型名 + hash 的原始订阅与 ROS 图; zenoh 钉 1.9.0, 与现场 rmw_zenoh_cpp 0.2.11 / router 1.7.2 互通), 以 client 模式连 router.
+支持订阅, 发布, 采集写 MCAP, 服务的 server 与 client (不含 action). 传输层建在 hiroz 0.2.1 之上 (rmw_zenoh 线协议, 按类型名 + hash 的原始订阅与 ROS 图; zenoh 钉 1.9.0, 与现场 rmw_zenoh_cpp 0.2.11 / router 1.7.2 互通), 以 client 模式连 router.
 
 ## 安装
 
@@ -118,6 +118,33 @@ pub.get_subscription_count(); pub.destroy()                                 # �
 
 消息为 dict, 须给全全部字段 (不取默认值); 嵌套消息为 dict, 数组可为 list/tuple, numpy 数组 (多维按 C 序展平) 或 bytes. 整数按字段类型查范围, 浮点字段也收整数. 字段缺失, 多出, 类型不符, 越界, 定长数组长度不符, 有界序列/字符串超界都抛 `rosz.EncodeError` (ValueError 子类, `path` 为字段路径如 `header.stamp.sec`), 什么也不发; 类型未知抛 `LookupError`. `QoSProfile` 的 reliability 取 `reliable`/`best_effort`, durability 取 `volatile`/`transient_local`. 发布端声明 liveliness token, 每条带 attachment (序号, 源时间戳), 与 rclpy 发布端一致.
 
+### 服务
+
+仿 rclpy 命名, 无 executor/spin. 类型从内置与 `msg_dirs` 追加目录的 `<包>/srv/<类型>.srv` 运行时解析 (服务 type hash 由 `.srv` 算出, 同 rosidl). 请求与应答都是 dict, 校验同发布.
+
+```python
+rz = rosz.connect(msg_dirs=["/opt/erban_interfaces"])
+
+def get_preset(request, response):           # response 为零值应答 dict (数值 0, 字符串空, 嵌套逐字段零值), 改了返回即可
+    response["preset_yaml"] = load(request["name"])
+    return response                          # 也可返回新 dict; 须给全字段
+
+srv = rz.create_service("erban_interfaces/srv/GetPreset", "/manip/presets/get", get_preset)   # workers=1
+srv.destroy()                                # 或 with rz.create_service(...) as srv: ; 撤销并等手上的请求处理完
+
+cli = rz.create_client("std_srvs/srv/SetBool", "/robot/enable")
+cli.wait_for_service(timeout_sec=5.0)        # 只看服务端 liveliness token; None 为一直等 (同 rclpy); 超时为 False
+cli.call({"data": True}, timeout_sec=2.0)    # 应答 dict; 超时或没有服务端为 None
+```
+
+- callback 只在服务自有的工作线程里跑 (默认 1 个, `workers=N` 时最多 N 个并发), 永不在 zenoh 接收线程; 进程不必 spin, 主线程照常干别的. 请求在工作线程忙时排队, 不丢.
+- 每个请求必回应答 (带回请求序号), 不用 `reply_err`: rmw_zenoh 把它当作没有应答, rclpy client 会一直等. 所以 callback 出错时 rosz 不学 rclpy (rclpy 回调抛异常时 executor 退出, 对端永远等不到应答), 而是记日志 (`logging.getLogger("rosz")`, error, 含 traceback) 并回 "失败应答":
+  - 应答类型顶层有回执字段 (类型为 `*/msg/Receipt`, 有 `uint8 code`, `string message`, `string detail_json`, 即 `erban_interfaces/msg/Receipt` 约定) 时, 以零值应答为底填回执: callback 抛异常或返回值不合定义为 `code=5` (INTERNAL_ERROR), 请求解不了为 `code=1` (INVALID_REQUEST); `message` 为错误概要, `detail_json` 为 JSON 对象 `{"error": ..., "traceback": ...}` (返回值不合定义时为 `"path"`, 出错字段路径). 其余字段为零值.
+  - 没有回执字段时回零值应答 (如 Trigger 为 `success=False, message=""`); 调用方区分不了成功与失败, 所以可能失败的服务请用 Receipt 回执 (`code == 0` 即成功, 不设 `bool success`).
+  - 业务失败 (请求合法但执行没成功) 由 callback 自己按约定填回执码返回, 不要抛异常.
+- client: 请求不合定义抛 `rosz.EncodeError`, 什么也不发. `timeout_sec=None` 同 rclpy 不设本地超时, 但查询本身最多 600 s (同 rmw_zenoh 默认 `queries_default_timeout`), 到时返回 None, 不会永远挂住; 服务不存在时查询立即结束, 返回 None. 等待中释放 GIL, 可 Ctrl-C. `service_is_ready()` 即时查.
+- 服务名为相对名时补成 `/名` (根命名空间). 服务端与客户端的 token 都挂在节点 `rosz` 下.
+
 按彩色像素查深度只支持深度已对齐到彩色 (视场相同, 分辨率成同一整数倍, 最近邻换算); 未对齐需内外参投影, 不做. 预期内失败用返回值; 只有程序错误 (话题不存在抛 `rosz.TopicNotFound`, 带 `candidates`) 与连接失败 (`ConnectionError`) 抛异常.
 
 ## Rust
@@ -131,7 +158,9 @@ if let Some(msg) = session.latest("/joint_states", std::time::Duration::from_sec
 
 发布: `session.create_publisher("std_msgs/msg/String", "/chatter", QosProfile::default()).await?`, 再 `publisher.publish(&value)?` (`Value` 值树, 校验不过为 `Error::Encode`).
 
-`rosz_decode::Registry` 可单独用: `Registry::builtin()` 含全部内置类型, `add_dir` 运行时追加, `decode(类型, CDR)` 出保持字段顺序的值树 (`uint8[]` 零拷贝), `encode(类型, &值树)` 反向编码为 CDR (按定义收窄与校验, 宽松输入: 整数 `I64`/`U64`, 浮点 `F64`, 数组 `List` 或数值数组), `rihs01(类型)` 由定义算 type hash.
+服务: `session.create_service("std_srvs/srv/SetBool", "/enable", ServiceOptions::default(), |request, response| Ok(response)).await?` (handler 为 `Fn(请求, 零值应答) -> Result<应答, HandlerError>`, 跑在服务自有的工作线程; 失败语义同 Python, 失败经 `ServiceOptions::on_failure`, 默认 `tracing` 记 warn); `session.create_client(类型, 名).await?` 后 `client.wait_for_service(Some(超时)).await` (bool), `client.call(&value, Some(超时)).await?` (`Ok(None)` 为超时或无服务端, 应答解不了为 `Error::Decode`).
+
+`rosz_decode::Registry` 可单独用: `Registry::builtin()` 含全部内置类型, `add_dir` 运行时追加 (`.msg` 与 `.srv`; `包/srv/X` 登记为 `X_Request`, `X_Response` 与只用于算 hash 的 `X_Event`, `X`), `zero_value(类型)` 为零值, `decode(类型, CDR)` 出保持字段顺序的值树 (`uint8[]` 零拷贝), `encode(类型, &值树)` 反向编码为 CDR (按定义收窄与校验, 宽松输入: 整数 `I64`/`U64`, 浮点 `F64`, 数组 `List` 或数值数组), `rihs01(类型)` 由定义算 type hash.
 
 ## 浏览器 (WASM)
 
@@ -142,20 +171,20 @@ if let Some(msg) = session.latest("/joint_states", std::time::Duration::from_sec
 | 目录 | 内容 |
 |---|---|
 | `crates/decode` | `rosz-decode`: `.msg` 注册表, XCDR1 解码与编码, RIHS01, MCAP schema 文本, 媒体解码 (JPEG 在 `jpeg` 开关后) |
-| `crates/access` | `rosz-access`: rmw_zenoh 话题发现, 订阅, 发布与采集 (MCAP) |
+| `crates/access` | `rosz-access`: rmw_zenoh 话题发现, 订阅, 发布, 采集 (MCAP) 与服务 |
 | `apps/cli` | `rosz` 命令行 |
 | `apps/view` | `rosz-view`: 查看器后端 (`rosz view`); `web/` 为前端 (Vite + React + rosz-ui 源码), 构建产物编进二进制 |
 | `bindings/python` | PyO3 wheel |
 | `bindings/wasm` | wasm-bindgen 模块与 npm 包 |
 | `packages/rosz-ui` | 共享可视化 UI 包 `@erban-robotics/rosz-ui` (原 erban-robotics/rosz-ui 仓库, 带历史并入), 见 [其 README](packages/rosz-ui/README.md) |
-| `messages` | 内置 `.msg` 与解码金样本, 见 [messages/README.md](messages/README.md) |
-| `scripts/jazzy` | 一次性 jazzy 容器 (rmw_zenoh_cpp 0.2.11): 生成金样本, 互通测试的发布端与 rclpy 订阅端 (`listen.py`) |
+| `messages` | 内置 `.msg` / `.srv` 与解码金样本, 见 [messages/README.md](messages/README.md) |
+| `scripts/jazzy` | 一次性 jazzy 容器 (rmw_zenoh_cpp 0.2.11): 生成金样本, 互通测试的发布端, rclpy 订阅端 (`listen.py`) 与服务对端 (`service.py`), 测试用 erban_interfaces 现编 (`erban_interfaces.sh`) |
 | `tests/e2e` | 互通测试 (pytest) |
 
 ## 开发与测试
 
 ```bash
-cargo test -p rosz-decode                  # 金样本回归: 逐字段对照 rclpy, 再编码与 rclpy 逐字节对照, 188 个类型 RIHS01 对照 rosidl
+cargo test -p rosz-decode                  # 金样本回归: 逐字段对照 rclpy, 再编码与 rclpy 逐字节对照, 188 个消息与 46 个服务 (各含请求/应答/事件) RIHS01 对照 rosidl
 bindings/wasm/build.sh && node --test bindings/wasm/test/decode.test.mjs
 npm install && npm run check -w @erban-robotics/rosz-ui    # rosz-ui: tsc + eslint + vitest
 ```
@@ -172,7 +201,7 @@ scripts/jazzy/e2e.sh
 docker rm -f rosz-jazzy
 ```
 
-换内置 `.msg` 后用 `scripts/jazzy/golden.sh` 重新生成金样本. 采集测试的额外发布端 (晚上线, transient_local, 发布进程重启) 为 `scripts/jazzy/publish_collect.py`, 由测试经 `docker exec` 拉起; schema 对照 `tests/e2e/message_schema.json` 用 `tests/e2e/gen_message_schema.py` 从 erban-caring 录制器重新生成 (用法见其开头).
+换内置 `.msg` 后用 `scripts/jazzy/golden.sh` 重新生成金样本. 采集测试的额外发布端 (晚上线, transient_local, 发布进程重启) 为 `scripts/jazzy/publish_collect.py`, 由测试经 `docker exec` 拉起; 服务测试的 rclpy 对端为 `scripts/jazzy/service.py`, 带 Receipt 回执的 erban 服务 (`messages/test/erban_interfaces`, 取自 erban-caring IDL 草案) 由测试调 `scripts/jazzy/erban_interfaces.sh` 在容器里现编 (几秒, 不进 setup.sh); schema 对照 `tests/e2e/message_schema.json` 用 `tests/e2e/gen_message_schema.py` 从 erban-caring 录制器重新生成 (用法见其开头).
 
 查看器前端须先构建, 产物 (`apps/view/web/dist`) 在编译 `rosz` 时编进二进制; 未构建时页面只提示先构建. 查看器协议不写自动化测试, 靠手动验收 (可用上面的 jazzy 容器发布):
 
