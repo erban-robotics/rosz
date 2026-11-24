@@ -57,6 +57,10 @@ impl Session {
         &self.inner.registry
     }
 
+    pub(crate) fn transport(&self) -> &Transport {
+        &self.inner.transport
+    }
+
     /// 当前全部有发布端的话题, 按名字排序.
     pub fn topics(&self) -> Vec<TopicInfo> {
         self.topic_publishers().into_iter().map(|(info, _)| info).collect()

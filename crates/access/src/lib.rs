@@ -3,6 +3,7 @@
 //! 第一版只订阅. 对外 API: [`connect`], [`Session::topics`], [`Session::latest`], [`Session::subscribe`].
 //! 预期内失败用返回值 (超时为 `None`, 解不了的消息 [`Message::value`] 返回错误), 只有程序错误与连接失败为 `Err`.
 
+mod collect;
 mod session;
 mod transport;
 
@@ -11,6 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 pub use rosz_decode::media::{AlignError, DepthImage, ImageKind, MediaError, RgbImage};
 pub use rosz_decode::{Decodability, DecodeError, Registry, Value};
+pub use collect::{CollectError, CollectOptions, CollectStats, Collector, Compression, DEFAULT_CHUNK_SIZE, LatencyStats, TopicStats};
 pub use session::{Session, Subscription, connect, resolve_router};
 use thiserror::Error;
 use transport::RawSample;
@@ -69,6 +71,8 @@ pub struct Message {
     pub sample_time_ns: Option<i64>,
     /// 发布方发出时刻 (attachment), Unix 纳秒
     pub source_time_ns: Option<i64>,
+    /// 发布端自增序号 (attachment), 每个发布端各自从 1 起
+    pub sequence: Option<i64>,
     /// 含 4 字节封装头的 CDR
     pub payload: Vec<u8>,
     pub decodability: Decodability,
@@ -85,6 +89,7 @@ impl Message {
             receive_time_ns: sample.receive_time_ns,
             sample_time_ns: decodable.then(|| registry.header_stamp(&topic.type_name, &payload)).flatten(),
             source_time_ns: sample.attachment.map(|a| a.source_time_ns),
+            sequence: sample.attachment.map(|a| a.sequence),
             payload,
             decodability: topic.decodability.clone(),
             registry,

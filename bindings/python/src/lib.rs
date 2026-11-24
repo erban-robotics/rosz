@@ -3,6 +3,8 @@
 //! 预期内失败用返回值: 超时为 None, 解不了的消息 `value` 为 None 且 `error` 为原因;
 //! 只有程序错误 (话题不存在, 用法不对) 与连接失败抛异常.
 
+mod collect;
+
 use std::sync::{LazyLock, Mutex, OnceLock};
 use std::time::Duration;
 
@@ -73,6 +75,20 @@ impl Session {
         let names: Vec<&str> = topics.iter().map(String::as_str).collect();
         let subscription = py.detach(|| RUNTIME.block_on(self.inner.subscribe(&names))).map_err(|e| to_py_err(py, e))?;
         Ok(Subscription { inner: Mutex::new(Some(subscription)) })
+    }
+
+    /// 开始把 `topics` 采集到 MCAP 文件 `path` (ros2 profile, 覆盖已有文件), 返回 `Collector`.
+    /// 清单里现在没有发布端的话题一上线即订上. `compression`: None / "zstd" / "lz4"; `chunk_size` 字节.
+    #[pyo3(signature = (path, topics, compression=None, chunk_size=None))]
+    fn collect(
+        &self,
+        py: Python<'_>,
+        path: std::path::PathBuf,
+        topics: Vec<String>,
+        compression: Option<String>,
+        chunk_size: Option<u64>,
+    ) -> PyResult<collect::Collector> {
+        collect::start(py, &self.inner, path, topics, compression, chunk_size)
     }
 
     /// 指定一对已对齐 (视场相同, 分辨率成整数倍) 的深度与彩色话题, 用于按彩色像素查深度.
@@ -225,6 +241,11 @@ impl Message {
     #[getter]
     fn source_time_ns(&self) -> Option<i64> {
         self.inner.source_time_ns
+    }
+    /// 发布端自增序号 (attachment); 无 attachment 为 None
+    #[getter]
+    fn sequence(&self) -> Option<i64> {
+        self.inner.sequence
     }
     /// 原始 CDR (含 4 字节封装头)
     #[getter]
@@ -404,5 +425,6 @@ fn rosz(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Message>()?;
     m.add_class::<AlignedPair>()?;
     m.add_class::<AlignedFrame>()?;
+    m.add_class::<collect::Collector>()?;
     Ok(())
 }

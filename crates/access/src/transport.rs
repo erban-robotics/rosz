@@ -107,6 +107,8 @@ pub(crate) struct SampleAttachment {
     pub sequence: i64,
     /// 发布方发出时刻, Unix 纳秒
     pub source_time_ns: i64,
+    /// 发布端 gid: 序号按发布端各自递增, 同一话题多个发布端 (或发布进程重启) 靠它区分
+    pub gid: [u8; 16],
 }
 
 /// 原始订阅 (按类型名 + hash, 不反序列化). drop 即退订 (撤 zenoh 订阅与 liveliness token).
@@ -168,6 +170,11 @@ impl Transport {
             .collect()
     }
 
+    /// 图变化通知 (任一 liveliness token 增删). 只唤醒已在等的: 先 `enable` 再查图, 免得漏掉.
+    pub fn graph_changed(&self) -> Arc<tokio::sync::Notify> {
+        self.inner.node.graph().change_notify.clone()
+    }
+
     /// 按发布端的话题, 类型名, hash 订阅原始字节, 并声明订阅端 token (按需发布的话题因此开始发布).
     /// `qos.transient_local` 时先取各发布端缓存的历史 (至多 `depth` 条).
     ///
@@ -224,6 +231,7 @@ impl<F: Fn(RawSample)> Drain<F> {
                 attachment: sample.attachment().and_then(|a| Attachment::try_from(a).ok()).map(|a| SampleAttachment {
                     sequence: a.sequence_number,
                     source_time_ns: a.source_timestamp,
+                    gid: a.source_gid,
                 }),
                 payload: sample.payload().to_bytes().into_owned(),
             });
