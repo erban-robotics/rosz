@@ -4,6 +4,7 @@
 //! 只有程序错误 (话题不存在, 用法不对) 与连接失败抛异常.
 
 mod collect;
+mod publish;
 
 use std::sync::{LazyLock, Mutex, OnceLock};
 use std::time::Duration;
@@ -16,14 +17,14 @@ use rosz_access::{AlignError, Error, Registry, Value};
 
 pyo3::create_exception!(rosz, TopicNotFound, PyLookupError, "话题不存在; `candidates` 为最相近的已知话题");
 
-static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
+pub(crate) static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
     tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().expect("建 tokio 运行时")
 });
 
 /// 阻塞等待时每隔这么久回到 Python 检查一次 Ctrl-C
 const SIGNAL_POLL: Duration = Duration::from_millis(100);
 
-fn to_py_err(py: Python<'_>, error: Error) -> PyErr {
+pub(crate) fn to_py_err(py: Python<'_>, error: Error) -> PyErr {
     let message = error.to_string();
     match error {
         Error::UnknownTopic { candidates, .. } => {
@@ -33,6 +34,8 @@ fn to_py_err(py: Python<'_>, error: Error) -> PyErr {
         }
         Error::NoRouter | Error::Connect { .. } => PyConnectionError::new_err(message),
         Error::Zenoh(_) => PyRuntimeError::new_err(message),
+        Error::UnknownType(_) => PyLookupError::new_err(message),
+        Error::Encode(e) => publish::encode_error(py, &e),
     }
 }
 
@@ -104,6 +107,19 @@ impl Session {
             }
         }
         Ok(AlignedPair { session: self.inner.clone(), depth, color })
+    }
+
+    /// 建话题发布端 (仿 rclpy): `msg_type` 为 `包/msg/类型`, 须为内置或 `connect(msg_dirs=...)` 追加的类型;
+    /// `qos_profile` 为 keep_last 深度 (reliable, volatile) 或 `QoSProfile`, 默认 10. 类型未知抛 LookupError.
+    #[pyo3(signature = (msg_type, topic, qos_profile=None))]
+    fn create_publisher(
+        &self,
+        py: Python<'_>,
+        msg_type: &str,
+        topic: &str,
+        qos_profile: Option<publish::QosArg>,
+    ) -> PyResult<publish::Publisher> {
+        publish::create_publisher(py, self, msg_type, topic, qos_profile)
     }
 
     fn __repr__(&self) -> String {
@@ -426,5 +442,6 @@ fn rosz(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<AlignedPair>()?;
     m.add_class::<AlignedFrame>()?;
     m.add_class::<collect::Collector>()?;
+    publish::register(m)?;
     Ok(())
 }

@@ -2,7 +2,7 @@
 
 不装 ROS 即可读取 ROS 2 (rmw_zenoh) 话题: 直连 Zenoh router, 靠 liveliness token 发现话题, 按内置 `.msg` (common_interfaces jazzy 全套 + erban 自定义) 通用解码, 并解码 JPEG 与深度 (`16UC1; zstd`, `16UC1; compressedDepth`). 同一份 Rust 代码出 Rust 库, Python wheel, 浏览器 WASM 与 `rosz` 命令行; 另有共享可视化 UI 包 rosz-ui (`packages/rosz-ui`, ADP, erban-caring webapp 与查看器共用).
 
-第一版只订阅, 不发布不调服务. 传输层建在 hiroz 0.2.1 之上 (rmw_zenoh 线协议, 按类型名 + hash 的原始订阅与 ROS 图; zenoh 钉 1.9.0, 与现场 rmw_zenoh_cpp 0.2.11 / router 1.7.2 互通), 以 client 模式连 router.
+支持订阅, 发布与采集写 MCAP, 暂不调服务. 传输层建在 hiroz 0.2.1 之上 (rmw_zenoh 线协议, 按类型名 + hash 的原始订阅与 ROS 图; zenoh 钉 1.9.0, 与现场 rmw_zenoh_cpp 0.2.11 / router 1.7.2 互通), 以 client 模式连 router.
 
 ## 安装
 
@@ -104,6 +104,20 @@ with rz.subscribe(["/joint_states", "/tf"]) as sub:
         print(msg.topic, msg.receive_time_ns, msg.sample_time_ns)
 ```
 
+发布 (仿 rclpy 命名, 类型从内置与 `connect(msg_dirs=[...])` 追加的 `.msg` 目录运行时解析, 目录按 `<包>/msg/<类型>.msg` 递归查找, 如 erban_interfaces):
+
+```python
+rz = rosz.connect(msg_dirs=["/opt/erban_interfaces"])
+pub = rz.create_publisher("sensor_msgs/msg/JointState", "/joint_states")      # qos_profile 默认 10: reliable, volatile, keep_last(10)
+pub.publish({"header": {"stamp": {"sec": 0, "nanosec": 0}, "frame_id": "base"},
+             "name": ["j1"], "position": np.array([0.1]), "velocity": [], "effort": []})
+static = rz.create_publisher("tf2_msgs/msg/TFMessage", "/tf_static",
+                             rosz.QoSProfile(depth=1, reliability="reliable", durability="transient_local"))
+pub.get_subscription_count(); pub.destroy()                                 # 或 with rz.create_publisher(...) as pub:
+```
+
+消息为 dict, 须给全全部字段 (不取默认值); 嵌套消息为 dict, 数组可为 list/tuple, numpy 数组 (多维按 C 序展平) 或 bytes. 整数按字段类型查范围, 浮点字段也收整数. 字段缺失, 多出, 类型不符, 越界, 定长数组长度不符, 有界序列/字符串超界都抛 `rosz.EncodeError` (ValueError 子类, `path` 为字段路径如 `header.stamp.sec`), 什么也不发; 类型未知抛 `LookupError`. `QoSProfile` 的 reliability 取 `reliable`/`best_effort`, durability 取 `volatile`/`transient_local`. 发布端声明 liveliness token, 每条带 attachment (序号, 源时间戳), 与 rclpy 发布端一致.
+
 按彩色像素查深度只支持深度已对齐到彩色 (视场相同, 分辨率成同一整数倍, 最近邻换算); 未对齐需内外参投影, 不做. 预期内失败用返回值; 只有程序错误 (话题不存在抛 `rosz.TopicNotFound`, 带 `candidates`) 与连接失败 (`ConnectionError`) 抛异常.
 
 ## Rust
@@ -115,7 +129,9 @@ if let Some(msg) = session.latest("/joint_states", std::time::Duration::from_sec
 }
 ```
 
-`rosz_decode::Registry` 可单独用: `Registry::builtin()` 含全部内置类型, `add_dir` 运行时追加, `decode(类型, CDR)` 出保持字段顺序的值树 (`uint8[]` 零拷贝), `rihs01(类型)` 由定义算 type hash.
+发布: `session.create_publisher("std_msgs/msg/String", "/chatter", QosProfile::default()).await?`, 再 `publisher.publish(&value)?` (`Value` 值树, 校验不过为 `Error::Encode`).
+
+`rosz_decode::Registry` 可单独用: `Registry::builtin()` 含全部内置类型, `add_dir` 运行时追加, `decode(类型, CDR)` 出保持字段顺序的值树 (`uint8[]` 零拷贝), `encode(类型, &值树)` 反向编码为 CDR (按定义收窄与校验, 宽松输入: 整数 `I64`/`U64`, 浮点 `F64`, 数组 `List` 或数值数组), `rihs01(类型)` 由定义算 type hash.
 
 ## 浏览器 (WASM)
 
@@ -125,21 +141,21 @@ if let Some(msg) = session.latest("/joint_states", std::time::Duration::from_sec
 
 | 目录 | 内容 |
 |---|---|
-| `crates/decode` | `rosz-decode`: `.msg` 注册表, XCDR1 解码, RIHS01, 媒体解码 (JPEG 在 `jpeg` 开关后) |
-| `crates/access` | `rosz-access`: rmw_zenoh 话题发现, 订阅与采集 (MCAP) |
+| `crates/decode` | `rosz-decode`: `.msg` 注册表, XCDR1 解码与编码, RIHS01, MCAP schema 文本, 媒体解码 (JPEG 在 `jpeg` 开关后) |
+| `crates/access` | `rosz-access`: rmw_zenoh 话题发现, 订阅, 发布与采集 (MCAP) |
 | `apps/cli` | `rosz` 命令行 |
 | `apps/view` | `rosz-view`: 查看器后端 (`rosz view`); `web/` 为前端 (Vite + React + rosz-ui 源码), 构建产物编进二进制 |
 | `bindings/python` | PyO3 wheel |
 | `bindings/wasm` | wasm-bindgen 模块与 npm 包 |
 | `packages/rosz-ui` | 共享可视化 UI 包 `@erban-robotics/rosz-ui` (原 erban-robotics/rosz-ui 仓库, 带历史并入), 见 [其 README](packages/rosz-ui/README.md) |
 | `messages` | 内置 `.msg` 与解码金样本, 见 [messages/README.md](messages/README.md) |
-| `scripts/jazzy` | 一次性 jazzy 容器 (rmw_zenoh_cpp 0.2.11): 生成金样本, 互通测试的发布端 |
+| `scripts/jazzy` | 一次性 jazzy 容器 (rmw_zenoh_cpp 0.2.11): 生成金样本, 互通测试的发布端与 rclpy 订阅端 (`listen.py`) |
 | `tests/e2e` | 互通测试 (pytest) |
 
 ## 开发与测试
 
 ```bash
-cargo test -p rosz-decode                  # 金样本回归: 逐字段对照 rclpy, 188 个类型 RIHS01 对照 rosidl
+cargo test -p rosz-decode                  # 金样本回归: 逐字段对照 rclpy, 再编码与 rclpy 逐字节对照, 188 个类型 RIHS01 对照 rosidl
 bindings/wasm/build.sh && node --test bindings/wasm/test/decode.test.mjs
 npm install && npm run check -w @erban-robotics/rosz-ui    # rosz-ui: tsc + eslint + vitest
 ```

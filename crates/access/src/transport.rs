@@ -53,7 +53,7 @@ impl Qos {
         }
     }
 
-    fn to_hiroz(self) -> QosProfile {
+    pub(crate) fn to_hiroz(self) -> QosProfile {
         QosProfile {
             reliability: if self.reliable { QosReliability::Reliable } else { QosReliability::BestEffort },
             durability: if self.transient_local { QosDurability::TransientLocal } else { QosDurability::Volatile },
@@ -146,6 +146,11 @@ impl Transport {
         let context = ZContextBuilder::default().with_domain_id(domain as usize).with_zenoh_config(config).build()?;
         let node = context.create_node(NODE_NAME).without_parameters().build()?;
         Ok(Transport { inner: Arc::new(Inner { node, _context: context }) })
+    }
+
+    /// 本进程的 ROS 节点 (发布, 服务等在其上建端点).
+    pub(crate) fn node(&self) -> &ZNode {
+        &self.inner.node
     }
 
     /// 当前图里全部话题发布端.

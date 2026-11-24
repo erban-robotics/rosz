@@ -1,9 +1,11 @@
 //! rosz 接入: 不装 ROS, 直连 Zenoh router 发现与订阅 rmw_zenoh 的 ROS 2 话题, 按内置 `.msg` 解码.
 //!
-//! 第一版只订阅. 对外 API: [`connect`], [`Session::topics`], [`Session::latest`], [`Session::subscribe`].
+//! 对外 API: [`connect`], [`Session::topics`], [`Session::latest`], [`Session::subscribe`], [`Session::create_publisher`],
+//! [`Session::collect`].
 //! 预期内失败用返回值 (超时为 `None`, 解不了的消息 [`Message::value`] 返回错误), 只有程序错误与连接失败为 `Err`.
 
 mod collect;
+mod publish;
 mod session;
 mod transport;
 
@@ -11,8 +13,11 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub use rosz_decode::media::{AlignError, DepthImage, ImageKind, MediaError, RgbImage};
-pub use rosz_decode::{Decodability, DecodeError, Registry, Value};
-pub use collect::{CollectError, CollectOptions, CollectStats, Collector, Compression, DEFAULT_CHUNK_SIZE, LatencyStats, TopicStats};
+pub use collect::{
+    CollectError, CollectOptions, CollectStats, Collector, Compression, DEFAULT_CHUNK_SIZE, LatencyStats, TopicStats,
+};
+pub use publish::{Publisher, QosProfile};
+pub use rosz_decode::{Decodability, DecodeError, EncodeError, Registry, Value};
 pub use session::{Session, Subscription, connect, resolve_router};
 use thiserror::Error;
 use transport::RawSample;
@@ -28,6 +33,10 @@ pub enum Error {
     Connect { router: String, source: zenoh::Error },
     #[error("没有话题 {topic}{}", candidates_hint(.candidates))]
     UnknownTopic { topic: String, candidates: Vec<String> },
+    #[error("没有类型 {0} 的定义 (内置或追加的 .msg 目录里都没有)")]
+    UnknownType(String),
+    #[error(transparent)]
+    Encode(#[from] EncodeError),
     #[error("zenoh: {0}")]
     Zenoh(zenoh::Error),
 }

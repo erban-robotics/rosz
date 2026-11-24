@@ -39,6 +39,37 @@ pub enum Value<'a> {
 }
 
 impl<'a> Value<'a> {
+    /// 脱离输入缓冲 (借用的字节数组复制一份).
+    pub fn into_owned(self) -> Value<'static> {
+        match self {
+            Value::Bool(v) => Value::Bool(v),
+            Value::I8(v) => Value::I8(v),
+            Value::U8(v) => Value::U8(v),
+            Value::I16(v) => Value::I16(v),
+            Value::U16(v) => Value::U16(v),
+            Value::I32(v) => Value::I32(v),
+            Value::U32(v) => Value::U32(v),
+            Value::I64(v) => Value::I64(v),
+            Value::U64(v) => Value::U64(v),
+            Value::F32(v) => Value::F32(v),
+            Value::F64(v) => Value::F64(v),
+            Value::String(v) => Value::String(v),
+            Value::Message(fields) => Value::Message(fields.into_iter().map(|(k, v)| (k, v.into_owned())).collect()),
+            Value::Bytes(v) => Value::Bytes(Cow::Owned(v.into_owned())),
+            Value::Bools(v) => Value::Bools(v),
+            Value::I8s(v) => Value::I8s(v),
+            Value::I16s(v) => Value::I16s(v),
+            Value::U16s(v) => Value::U16s(v),
+            Value::I32s(v) => Value::I32s(v),
+            Value::U32s(v) => Value::U32s(v),
+            Value::I64s(v) => Value::I64s(v),
+            Value::U64s(v) => Value::U64s(v),
+            Value::F32s(v) => Value::F32s(v),
+            Value::F64s(v) => Value::F64s(v),
+            Value::List(v) => Value::List(v.into_iter().map(Value::into_owned).collect()),
+        }
+    }
+
     /// 消息的字段; 非消息或无此字段为 None.
     pub fn get(&self, field: &str) -> Option<&Value<'a>> {
         match self {

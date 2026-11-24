@@ -53,12 +53,12 @@ impl Session {
         Ok(Session { inner: Arc::new(Inner { transport, registry: Arc::new(registry) }) })
     }
 
-    pub fn registry(&self) -> &Arc<Registry> {
-        &self.inner.registry
-    }
-
     pub(crate) fn transport(&self) -> &Transport {
         &self.inner.transport
+    }
+
+    pub fn registry(&self) -> &Arc<Registry> {
+        &self.inner.registry
     }
 
     /// 当前全部有发布端的话题, 按名字排序.
