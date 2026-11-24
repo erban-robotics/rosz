@@ -103,6 +103,12 @@ def test_cli_echo_matches_rclpy():
     assert wrong == []
 
 
+def test_cli_echo_carries_publisher_source_time():
+    # rclpy 发布端在 attachment 里带发出时刻; 容器与本机同一时钟, 应与接收时刻相差不到 1 秒
+    message = json.loads(cli("echo", "/joint_states", "-n", "1", "--json").stdout)
+    assert abs(message["receive_time_ns"] - message["source_time_ns"]) < 1_000_000_000
+
+
 def test_cli_topics_lists_types_and_decodability():
     topics = {t["name"]: t for t in json.loads(cli("topics", "--json").stdout)["topics"]}
     assert [(topics[n]["type"], topics[n]["decodable"]) for n in ["/joint_states", "/hand/pressure", COLOR, "/test/basic"]] == [
