@@ -1,0 +1,12 @@
+# /manip/presets/get  不占资源
+# 读某个预设的原始内容.
+
+string TYPE_MPC="mpc"
+string TYPE_HAND="hand"
+string TYPE_ACTION="action"
+
+string preset_type        # 取上面三个常量之一
+string name
+---
+Receipt receipt
+string preset_yaml        # 预设 dict 序列化为 yaml (继承/展开后的解析结果, 不是磁盘原文). 形状随预设类型走, 不典型化
