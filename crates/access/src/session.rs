@@ -1,16 +1,11 @@
 use std::collections::HashMap;
 use std::env;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::mpsc;
-use zenoh::liveliness::LivelinessToken;
-use zenoh::pubsub::Subscriber;
-use zenoh::sample::SampleKind;
-use zenoh_ext::{AdvancedSubscriber, AdvancedSubscriberBuilderExt, HistoryConfig};
 
-use crate::wire::{self, PublisherToken};
+use crate::transport::{Endpoint, Qos, RawSubscriber, Transport};
 use crate::{Error, Message, ROUTER_ENV, Registry, TopicInfo, candidates};
 
 const DEFAULT_ROUTER_PORT: u16 = 7447;
@@ -43,15 +38,8 @@ pub struct Session {
 }
 
 struct Inner {
-    zenoh: zenoh::Session,
+    transport: Transport,
     registry: Arc<Registry>,
-    domain: u32,
-    zid: String,
-    /// 发布端 token key -> 内容
-    publishers: Arc<Mutex<HashMap<String, PublisherToken>>>,
-    next_entity: AtomicU64,
-    _node_token: LivelinessToken,
-    _graph: Subscriber<()>,
 }
 
 impl Session {
@@ -59,63 +47,10 @@ impl Session {
     pub async fn open(router: Option<&str>, domain: Option<u32>, registry: Registry) -> Result<Session, Error> {
         let endpoint = resolve_router(router)?;
         let domain = domain.or_else(|| env::var("ROS_DOMAIN_ID").ok()?.parse().ok()).unwrap_or(0);
-        let mut config = zenoh::Config::default();
-        let set = |config: &mut zenoh::Config, key: &str, value: String| {
-            config.insert_json5(key, &value).map_err(|e| Error::Connect { router: endpoint.clone(), source: e })
-        };
-        set(&mut config, "mode", "\"client\"".into())?;
-        set(&mut config, "connect/endpoints", format!("[\"{endpoint}\"]"))?;
-        set(&mut config, "scouting/multicast/enabled", "false".into())?;
-        let zenoh = zenoh::open(config).await.map_err(|source| Error::Connect { router: endpoint.clone(), source })?;
-        let zid = zenoh.zid().to_string();
-
-        let publishers: Arc<Mutex<HashMap<String, PublisherToken>>> = Arc::default();
-        let prefix = format!("{}/{domain}/**", wire::LIVELINESS_PREFIX);
-        let graph = {
-            let publishers = publishers.clone();
-            zenoh
-                .liveliness()
-                .declare_subscriber(&prefix)
-                .history(true)
-                .callback(move |sample| {
-                    let key = sample.key_expr().as_str();
-                    let mut publishers = publishers.lock().unwrap();
-                    match sample.kind() {
-                        SampleKind::Put => {
-                            if let Some(token) = wire::parse_publisher_token(key) {
-                                publishers.insert(key.into(), token);
-                            }
-                        }
-                        SampleKind::Delete => {
-                            publishers.remove(key);
-                        }
-                    }
-                })
-                .await
-                .map_err(Error::Zenoh)?
-        };
-        // 再查一次现存 token: 查询结束即首轮发现完成
-        let replies = zenoh.liveliness().get(&prefix).await.map_err(Error::Zenoh)?;
-        while let Ok(reply) = replies.recv_async().await {
-            if let Ok(sample) = reply.result()
-                && let Some(token) = wire::parse_publisher_token(sample.key_expr().as_str())
-            {
-                publishers.lock().unwrap().insert(sample.key_expr().to_string(), token);
-            }
-        }
-        let node_token = zenoh.liveliness().declare_token(wire::node_token(domain, &zid)).await.map_err(Error::Zenoh)?;
-        Ok(Session {
-            inner: Arc::new(Inner {
-                zenoh,
-                registry: Arc::new(registry),
-                domain,
-                zid,
-                publishers,
-                next_entity: AtomicU64::new(1),
-                _node_token: node_token,
-                _graph: graph,
-            }),
-        })
+        let transport = Transport::open(endpoint.clone(), domain)
+            .await
+            .map_err(|source| Error::Connect { router: endpoint, source })?;
+        Ok(Session { inner: Arc::new(Inner { transport, registry: Arc::new(registry) }) })
     }
 
     pub fn registry(&self) -> &Arc<Registry> {
@@ -127,30 +62,30 @@ impl Session {
         self.topic_publishers().into_iter().map(|(info, _)| info).collect()
     }
 
-    fn topic_publishers(&self) -> Vec<(TopicInfo, PublisherToken)> {
-        let publishers = self.inner.publishers.lock().unwrap();
-        let mut by_topic: HashMap<&str, (PublisherToken, usize)> = HashMap::new();
-        for token in publishers.values() {
-            let entry = by_topic.entry(&token.topic).or_insert_with(|| (token.clone(), 0));
+    /// 每话题一个代表发布端与汇总信息.
+    fn topic_publishers(&self) -> Vec<(TopicInfo, Endpoint)> {
+        let mut by_topic: HashMap<String, (Endpoint, usize)> = HashMap::new();
+        for publisher in self.inner.transport.publishers() {
+            let entry = by_topic.entry(publisher.topic.clone()).or_insert_with(|| (publisher.clone(), 0));
             entry.1 += 1;
             // 发布端 durability 不一时以 transient_local 的为代表: 订阅时取得到它缓存的历史, 话题也标静态
-            if token.transient_local && !entry.0.transient_local {
-                entry.0 = token.clone();
+            if publisher.qos.transient_local && !entry.0.qos.transient_local {
+                entry.0 = publisher;
             }
         }
         let mut out: Vec<_> = by_topic
             .into_values()
-            .map(|(token, count)| {
-                let type_name = wire::ros_type_name(&token.dds_type).unwrap_or_else(|| token.dds_type.clone());
+            .map(|(publisher, count)| {
+                let type_name = publisher.ros_type();
                 let info = TopicInfo {
-                    name: token.topic.clone(),
-                    decodability: self.inner.registry.check(&type_name, Some(&token.type_hash)),
+                    name: publisher.topic.clone(),
+                    decodability: self.inner.registry.check(&type_name, Some(&publisher.type_hash)),
                     type_name,
-                    type_hash: token.type_hash.clone(),
-                    transient_local: token.transient_local,
+                    type_hash: publisher.type_hash.clone(),
+                    transient_local: publisher.qos.transient_local,
                     publishers: count,
                 };
-                (info, token)
+                (info, publisher)
             })
             .collect();
         out.sort_by(|a, b| a.0.name.cmp(&b.0.name));
@@ -158,7 +93,7 @@ impl Session {
     }
 
     /// 话题不存在时的错误, 附最相近的候选.
-    fn unknown(&self, topic: &str, known: &[(TopicInfo, PublisherToken)]) -> Error {
+    fn unknown(&self, topic: &str, known: &[(TopicInfo, Endpoint)]) -> Error {
         let candidates = candidates(topic, known.iter().map(|(t, _)| t.name.as_str()));
         Error::UnknownTopic { topic: topic.into(), candidates }
     }
@@ -174,27 +109,18 @@ impl Session {
         }
         let (tx, rx) = mpsc::channel(SUBSCRIPTION_QUEUE);
         let mut handles = Vec::new();
-        for (info, token) in chosen {
-            let keyexpr = wire::topic_keyexpr(self.inner.domain, &info.name, &token.dds_type, &token.type_hash);
-            let (tx, registry, info) = (tx.clone(), self.inner.registry.clone(), Arc::new(info));
-            let transient_local = info.transient_local;
-            let callback = move |sample: zenoh::sample::Sample| {
-                let attachment = sample.attachment().map(|a| a.to_bytes());
-                let payload = sample.payload().to_bytes().into_owned();
-                let _ = tx.try_send(Message::new(&info, payload, attachment.as_deref(), registry.clone()));
-            };
-            let builder = self.inner.zenoh.declare_subscriber(keyexpr).callback(callback);
-            handles.push(if transient_local {
-                // 发布端为 AdvancedPublisher + 缓存: 用 AdvancedSubscriber 先取历史
-                Handle::Advanced(
-                    builder.history(HistoryConfig::default().detect_late_publishers()).await.map_err(Error::Zenoh)?,
-                )
+        for (info, publisher) in chosen {
+            // transient_local 话题按代表发布端的深度取全它缓存的历史
+            let qos = if info.transient_local {
+                Qos { transient_local: true, depth: publisher.qos.depth, ..Qos::default() }
             } else {
-                Handle::Plain(builder.await.map_err(Error::Zenoh)?)
-            });
-            let entity = self.inner.next_entity.fetch_add(1, Ordering::Relaxed);
-            let key = wire::subscription_token(self.inner.domain, &self.inner.zid, entity, &token);
-            handles.push(Handle::Token(self.inner.zenoh.liveliness().declare_token(key).await.map_err(Error::Zenoh)?));
+                Qos::default()
+            };
+            let (tx, registry, info) = (tx.clone(), self.inner.registry.clone(), Arc::new(info));
+            let on_sample = move |sample| {
+                let _ = tx.try_send(Message::new(&info, sample, registry.clone()));
+            };
+            handles.push(self.inner.transport.subscribe(&publisher, qos, on_sample).await.map_err(Error::Zenoh)?);
         }
         Ok(Subscription { rx, _handles: handles })
     }
@@ -206,16 +132,10 @@ impl Session {
     }
 }
 
-enum Handle {
-    Plain(#[allow(dead_code)] Subscriber<()>),
-    Advanced(#[allow(dead_code)] AdvancedSubscriber<()>),
-    Token(#[allow(dead_code)] LivelinessToken),
-}
-
 /// 订阅流; drop 即退订.
 pub struct Subscription {
     rx: mpsc::Receiver<Message>,
-    _handles: Vec<Handle>,
+    _handles: Vec<RawSubscriber>,
 }
 
 impl Subscription {

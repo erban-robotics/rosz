@@ -10,6 +10,10 @@ repository.workspace = true
 rosz-decode = { workspace = true, features = ["jpeg"] }
 thiserror.workspace = true
 zenoh.workspace = true
-zenoh-ext.workspace = true
+# rmw_zenoh 线协议 (keyexpr, liveliness, attachment, transient_local) 由 hiroz 实现; zenoh 同为 =1.9.0
+# rmw: hiroz 的 notifier 式订阅 (回调里取 Sample, 拿得到 attachment)
+hiroz = { version = "=0.2.1", default-features = false, features = ["jazzy", "rmw-zenoh", "rmw"] }
+hiroz-protocol = { version = "=0.2.1", default-features = false }
+hiroz-schema = "=0.2.1"
 tokio.workspace = true
 strsim = "0.11"
