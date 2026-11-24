@@ -8,6 +8,7 @@ mod hash;
 pub mod media;
 pub mod msg;
 mod registry;
+mod schema;
 mod value;
 
 pub use cdr::DecodeError;
