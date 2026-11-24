@@ -54,6 +54,34 @@ rosz view --router tcp/192.168.1.10:7447    # 或 export ROSZ_ROUTER 后直接 r
 
 背压 (前端处理不过来时, 见 `apps/view/src/outbox.rs`): 每个订阅一个发送队列. `CompressedImage` `Image` `PointCloud2` `CompressedVideo` 每路只留最新一条, 连接待发字节低于 4 MB 才入队 (降帧, 不通知); 其余话题各留约 1 秒, 满了丢最旧的并发 "已丢 N 条" (`status` 帧附 `subscriptionId` 与 `dropped`), 前端记一次不连续并在顶上提示累计条数. 先发小消息再发大消息, 图像不挡在小消息前面.
 
+## 采集 (MCAP)
+
+按话题清单把收到的消息原样写成 MCAP (ros2 profile), Rust, Python, CLI 三种用法:
+
+```bash
+rosz collect /joint_states /tf /tf_static --out ep.mcap --seconds 10 --compression zstd   # 不给 --seconds 则到 Ctrl-C / SIGTERM
+```
+
+```python
+collector = rz.collect("ep.mcap", ["/joint_states", "/head/color/compressed"], compression=None, chunk_size=768 * 1024)
+collector.stats()        # 运行中随时读
+summary = collector.stop()   # 写完队列并封口, 返回最终统计; 也可 with rz.collect(...) as c:
+```
+
+```rust
+let collector = session.collect("ep.mcap", &["/joint_states"], rosz_access::CollectOptions::default()).await?;
+let stats = collector.stop().await?;
+```
+
+- 发现驱动订阅: 清单里开录时还没有发布端的话题 (含发布进程中途重启) 一上线即订上; transient_local 话题先取发布端缓存的历史 (至多 1000 条). 收不到的话题不报错, 只是不在统计里
+- 不丢: zenoh 回调只入无界队列, 独立写盘线程写 MCAP; `stop` 撤掉订阅后写完队列再封口
+- 每话题一个 channel, 消息编码 `cdr`; `log_time` = 本机接收时刻, `publish_time` = attachment 源时间戳, `sequence` = 发布端序号低 32 位 (无 attachment 时为接收时刻与 0). schema 为 `ros2msg` 文本, 由 rosz 注册表生成, 与 rosbags `generate_msgdef` (erban-caring 原录制器) 逐字一致; 注册表没有的类型 schema 留空照写
+- chunk 压缩 `none` (默认) / `zstd` / `lz4`, chunk 大小默认 768 KiB
+- 统计 (Python dict, CLI JSON 同结构): `topics` 每话题 `type`, `received`, `written`, `gaps` (按发布端 gid 各自的序号缺口), `publisher_restarts`, `last_receive_time_ns`, `last_header_stamp_ns` (最近一条的 Header.stamp), `latency_ns` (`p50` / `p95` / `max`, 接收减源时间戳); 另有 `written`, `queue_depth`, `last_write_time_ns`, `errors`
+- 不内置 "就绪" 与 "追到停止时刻": 由调用方看统计自己判 (如等各话题 `received > 0`, 等 `last_header_stamp_ns` 追过停止时刻再 `stop`)
+
+订阅到的 `Message` 带发布端序号 `sequence` (attachment, 每个发布端从 1 起).
+
 ## Python
 
 ```python
@@ -98,7 +126,7 @@ if let Some(msg) = session.latest("/joint_states", std::time::Duration::from_sec
 | 目录 | 内容 |
 |---|---|
 | `crates/decode` | `rosz-decode`: `.msg` 注册表, XCDR1 解码, RIHS01, 媒体解码 (JPEG 在 `jpeg` 开关后) |
-| `crates/access` | `rosz-access`: rmw_zenoh 话题发现与订阅 |
+| `crates/access` | `rosz-access`: rmw_zenoh 话题发现, 订阅与采集 (MCAP) |
 | `apps/cli` | `rosz` 命令行 |
 | `apps/view` | `rosz-view`: 查看器后端 (`rosz view`); `web/` 为前端 (Vite + React + rosz-ui 源码), 构建产物编进二进制 |
 | `bindings/python` | PyO3 wheel |
@@ -128,7 +156,7 @@ scripts/jazzy/e2e.sh
 docker rm -f rosz-jazzy
 ```
 
-换内置 `.msg` 后用 `scripts/jazzy/golden.sh` 重新生成金样本.
+换内置 `.msg` 后用 `scripts/jazzy/golden.sh` 重新生成金样本. 采集测试的额外发布端 (晚上线, transient_local, 发布进程重启) 为 `scripts/jazzy/publish_collect.py`, 由测试经 `docker exec` 拉起; schema 对照 `tests/e2e/message_schema.json` 用 `tests/e2e/gen_message_schema.py` 从 erban-caring 录制器重新生成 (用法见其开头).
 
 查看器前端须先构建, 产物 (`apps/view/web/dist`) 在编译 `rosz` 时编进二进制; 未构建时页面只提示先构建. 查看器协议不写自动化测试, 靠手动验收 (可用上面的 jazzy 容器发布):
 
