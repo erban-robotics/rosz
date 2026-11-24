@@ -48,7 +48,7 @@ impl Collector {
     /// 当前统计 (stop 后为最终统计):
     /// `{"topics": {话题: {type, received, written, gaps, publisher_restarts, last_receive_time_ns,
     /// last_header_stamp_ns, latency_ns: {p50, p95, max} 或 None}}, "written", "queue_depth", "last_write_time_ns", "errors"}`.
-    /// 清单里还没有发布端的话题不在 `topics` 里.
+    /// 清单里还没有发布端的话题不在 `topics` 里. `latency_ns` 只算每话题最近 1000 条 (滑动窗口).
     fn stats<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let stats = match self.inner.lock().unwrap().as_ref() {
             Some(collector) => collector.stats(),

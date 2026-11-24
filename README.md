@@ -77,7 +77,7 @@ let stats = collector.stop().await?;
 - 不丢: zenoh 回调只入无界队列, 独立写盘线程写 MCAP; `stop` 撤掉订阅后写完队列再封口
 - 每话题一个 channel, 消息编码 `cdr`; `log_time` = 本机接收时刻, `publish_time` = attachment 源时间戳, `sequence` = 发布端序号低 32 位 (无 attachment 时为接收时刻与 0). schema 为 `ros2msg` 文本, 由 rosz 注册表生成, 与 rosbags `generate_msgdef` (erban-caring 原录制器) 逐字一致; 注册表没有的类型 schema 留空照写
 - chunk 压缩 `none` (默认) / `zstd` / `lz4`, chunk 大小默认 768 KiB
-- 统计 (Python dict, CLI JSON 同结构): `topics` 每话题 `type`, `received`, `written`, `gaps` (按发布端 gid 各自的序号缺口), `publisher_restarts`, `last_receive_time_ns`, `last_header_stamp_ns` (最近一条的 Header.stamp), `latency_ns` (`p50` / `p95` / `max`, 接收减源时间戳); 另有 `written`, `queue_depth`, `last_write_time_ns`, `errors`
+- 统计 (Python dict, CLI JSON 同结构): `topics` 每话题 `type`, `received`, `written`, `gaps` (按发布端 gid 各自的序号缺口), `publisher_restarts`, `last_receive_time_ns`, `last_header_stamp_ns` (最近一条的 Header.stamp), `latency_ns` (`p50` / `p95` / `max`, 接收减源时间戳, 只算最近 1000 条的滑动窗口, 最近秩分位); 另有 `written`, `queue_depth`, `last_write_time_ns`, `errors`
 - 不内置 "就绪" 与 "追到停止时刻": 由调用方看统计自己判 (如等各话题 `received > 0`, 等 `last_header_stamp_ns` 追过停止时刻再 `stop`)
 
 订阅到的 `Message` 带发布端序号 `sequence` (attachment, 每个发布端从 1 起).

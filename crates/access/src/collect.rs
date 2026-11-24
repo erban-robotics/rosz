@@ -7,7 +7,7 @@
 //!
 //! 只做通用部分: 就绪判定, "追到停止时刻" 之类的收尾语义留给调用方 (看 [`Collector::stats`] 自己判).
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fs::File;
 use std::io::{self, BufWriter};
 use std::path::{Path, PathBuf};
@@ -28,6 +28,8 @@ use crate::{Registry, Session};
 const COLLECT_DEPTH: usize = 1000;
 /// 图变化通知之外, 每隔这么久也重查一次清单内的发布端 (兜底, 并重试订阅失败的话题)
 const RESCAN_INTERVAL: Duration = Duration::from_millis(500);
+/// 延迟分布按每话题最近这么多条 (带 attachment 的) 消息算: 内存有界, `stats()` 开销固定
+const LATENCY_WINDOW: usize = 1000;
 /// 统计里至多留这么多条错误
 const MAX_ERRORS: usize = 100;
 /// MCAP chunk 默认大小 (同 mcap 库默认)
@@ -111,11 +113,11 @@ pub struct TopicStats {
     pub last_receive_time_ns: Option<i64>,
     /// 最近一条的 Header.stamp, Unix 纳秒; 类型无 Header 或解不了为 None
     pub last_header_stamp_ns: Option<i64>,
-    /// 接收时刻减源时间戳; 没有带 attachment 的消息为 None
+    /// 接收时刻减源时间戳, 只算最近 1000 条带 attachment 的消息 (滑动窗口, 不是全程); 一条都没有为 None
     pub latency: Option<LatencyStats>,
 }
 
-/// 延迟分布, 纳秒.
+/// 延迟分布, 纳秒; 取自最近 1000 条的滑动窗口, 分位为最近秩 (第 round((n-1)p) 小).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LatencyStats {
     pub p50_ns: i64,
@@ -252,7 +254,8 @@ struct Counters {
     last_receive_time_ns: Option<i64>,
     last_header_stamp_ns: Option<i64>,
     last_sequence_by_gid: HashMap<[u8; 16], i64>,
-    latencies_ns: Vec<i64>,
+    /// 最近 [`LATENCY_WINDOW`] 条的延迟, 满了丢最旧的
+    latencies_ns: VecDeque<i64>,
 }
 
 impl TopicState {
@@ -265,7 +268,10 @@ impl TopicState {
             c.last_header_stamp_ns = stamp;
         }
         let Some(attachment) = sample.attachment else { return };
-        c.latencies_ns.push(sample.receive_time_ns - attachment.source_time_ns);
+        if c.latencies_ns.len() == LATENCY_WINDOW {
+            c.latencies_ns.pop_front();
+        }
+        c.latencies_ns.push_back(sample.receive_time_ns - attachment.source_time_ns);
         let known = !c.last_sequence_by_gid.is_empty();
         match c.last_sequence_by_gid.insert(attachment.gid, attachment.sequence) {
             None if known => c.publisher_restarts += 1,
@@ -278,7 +284,7 @@ impl TopicState {
     fn stats(&self) -> TopicStats {
         let c = self.counters.lock().unwrap_or_else(|e| e.into_inner());
         let latency = (!c.latencies_ns.is_empty()).then(|| {
-            let mut sorted = c.latencies_ns.clone();
+            let mut sorted: Vec<i64> = c.latencies_ns.iter().copied().collect();
             sorted.sort_unstable();
             // 最近秩: 第 round((n-1)p) 个
             let at = |p: f64| sorted[((sorted.len() - 1) as f64 * p).round() as usize];
@@ -451,5 +457,40 @@ impl Discovery {
             self.shared.topics.lock().unwrap_or_else(|e| e.into_inner()).remove(topic);
         }
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::transport::SampleAttachment;
+
+    fn sample(latency_ns: i64, sequence: i64) -> RawSample {
+        let receive_time_ns = 1_000_000_000_000;
+        RawSample {
+            payload: Vec::new(),
+            receive_time_ns,
+            attachment: Some(SampleAttachment { sequence, source_time_ns: receive_time_ns - latency_ns, gid: [7; 16] }),
+        }
+    }
+
+    /// 延迟分布只算最近 LATENCY_WINDOW 条: 早先的大延迟滚出窗口后不再影响 max.
+    #[test]
+    fn latency_covers_recent_window_only() {
+        let registry = Registry::builtin();
+        let topic = TopicState {
+            name: "/t".into(),
+            type_name: "std_msgs/msg/String".into(),
+            decodable: false,
+            counters: Mutex::default(),
+            written: AtomicU64::new(0),
+        };
+        topic.on_arrival(&sample(5_000_000_000, 1), &registry);
+        for i in 0..LATENCY_WINDOW as i64 {
+            topic.on_arrival(&sample(1_000 + i, i + 2), &registry);
+        }
+        let stats = topic.stats();
+        assert_eq!(stats.latency.unwrap().max_ns, 1_000 + LATENCY_WINDOW as i64 - 1);
+        assert_eq!(stats.received, LATENCY_WINDOW as u64 + 1);
     }
 }
