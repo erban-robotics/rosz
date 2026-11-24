@@ -73,7 +73,7 @@ let collector = session.collect("ep.mcap", &["/joint_states"], rosz_access::Coll
 let stats = collector.stop().await?;
 ```
 
-- 发现驱动订阅: 清单里开录时还没有发布端的话题 (含发布进程中途重启) 一上线即订上; transient_local 话题先取发布端缓存的历史 (至多 1000 条). 收不到的话题不报错, 只是不在统计里
+- 发现驱动订阅: 清单里开录时还没有发布端的话题 (含发布进程中途重启) 一上线即订上; transient_local 话题先取发布端缓存的历史 (至多 1000 条); 已按 volatile 订上的话题后来出现 transient_local 发布端时改用 transient_local 重订补取其历史, 按 (发布端 gid, 序号) 去重. 收不到的话题不报错, 只是不在统计里
 - 不丢: zenoh 回调只入无界队列, 独立写盘线程写 MCAP; `stop` 撤掉订阅后写完队列再封口
 - 每话题一个 channel, 消息编码 `cdr`; `log_time` = 本机接收时刻, `publish_time` = attachment 源时间戳, `sequence` = 发布端序号低 32 位 (无 attachment 时为接收时刻与 0). schema 为 `ros2msg` 文本, 由 rosz 注册表生成, 与 rosbags `generate_msgdef` (erban-caring 原录制器) 逐字一致; 注册表没有的类型 schema 留空照写
 - chunk 压缩 `none` (默认) / `zstd` / `lz4`, chunk 大小默认 768 KiB

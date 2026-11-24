@@ -1,6 +1,8 @@
 //! 采集: 按话题清单把收到的消息原样写成 MCAP (ros2 profile), 不丢已到达的消息.
 //!
-//! - 发现驱动订阅: 清单里的话题一有发布端 (开录后才上线, 发布进程重启) 即订上; transient_local 话题先取发布端缓存的历史
+//! - 发现驱动订阅: 清单里的话题一有发布端 (开录后才上线, 发布进程重启) 即订上; transient_local 话题先取发布端缓存的历史.
+//!   已按 volatile 订上的话题后来出现 transient_local 发布端时, 改用 transient_local 重订以补取其历史;
+//!   新旧订阅交替期间同一条会到两次, 按 (发布端 gid, 序号) 去重, 不重不丢
 //! - zenoh 回调只记统计并入无界队列; 独立写盘线程写 MCAP, stop 时写完队列再封口
 //! - 每话题一个 channel: `log_time` = 接收时刻, `publish_time` = attachment 源时间戳, `sequence` = 发布端序号低 32 位,
 //!   schema 为 rosz 注册表生成的 `ros2msg` 文本, 消息编码 `cdr`
@@ -30,6 +32,8 @@ const COLLECT_DEPTH: usize = 1000;
 const RESCAN_INTERVAL: Duration = Duration::from_millis(500);
 /// 延迟分布按每话题最近这么多条 (带 attachment 的) 消息算: 内存有界, `stats()` 开销固定
 const LATENCY_WINDOW: usize = 1000;
+/// 按 (发布端 gid, 序号) 去重时记住的最近条数 (每话题); 只需盖住重订交替期间的重复 (历史至多 COLLECT_DEPTH 条)
+const DEDUP_WINDOW: usize = 4 * COLLECT_DEPTH;
 /// 统计里至多留这么多条错误
 const MAX_ERRORS: usize = 100;
 /// MCAP chunk 默认大小 (同 mcap 库默认)
@@ -256,10 +260,37 @@ struct Counters {
     last_sequence_by_gid: HashMap<[u8; 16], i64>,
     /// 最近 [`LATENCY_WINDOW`] 条的延迟, 满了丢最旧的
     latencies_ns: VecDeque<i64>,
+    /// 最近 [`DEDUP_WINDOW`] 条的 (发布端 gid, 序号), 满了丢最旧的
+    seen: HashSet<([u8; 16], i64)>,
+    seen_order: VecDeque<([u8; 16], i64)>,
+}
+
+impl Counters {
+    /// 记下一条的 (gid, 序号); 已见过 (重订交替期间新旧订阅各到一次) 为 false.
+    fn first_seen(&mut self, key: ([u8; 16], i64)) -> bool {
+        if !self.seen.insert(key) {
+            return false;
+        }
+        if self.seen_order.len() == DEDUP_WINDOW
+            && let Some(old) = self.seen_order.pop_front()
+        {
+            self.seen.remove(&old);
+        }
+        self.seen_order.push_back(key);
+        true
+    }
 }
 
 impl TopicState {
-    fn on_arrival(&self, sample: &RawSample, registry: &Registry) {
+    /// 记一条到达; 重复 (同一发布端同一序号已收过) 为 false, 不计数也不该写盘.
+    fn on_arrival(&self, sample: &RawSample, registry: &Registry) -> bool {
+        let mut c = self.counters.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(a) = sample.attachment
+            && !c.first_seen((a.gid, a.sequence))
+        {
+            return false;
+        }
+        drop(c);
         let stamp = if self.decodable { registry.header_stamp(&self.type_name, &sample.payload) } else { None };
         let mut c = self.counters.lock().unwrap_or_else(|e| e.into_inner());
         c.received += 1;
@@ -267,7 +298,7 @@ impl TopicState {
         if stamp.is_some() {
             c.last_header_stamp_ns = stamp;
         }
-        let Some(attachment) = sample.attachment else { return };
+        let Some(attachment) = sample.attachment else { return true };
         if c.latencies_ns.len() == LATENCY_WINDOW {
             c.latencies_ns.pop_front();
         }
@@ -279,6 +310,7 @@ impl TopicState {
             Some(last) if attachment.sequence <= last => c.publisher_restarts += 1,
             Some(last) => c.gaps += (attachment.sequence - last - 1) as u64,
         }
+        true
     }
 
     fn stats(&self) -> TopicStats {
@@ -386,18 +418,31 @@ struct Discovery {
     tx: mpsc::Sender<Item>,
 }
 
+/// 一个已订上的话题的订阅.
+struct Subscribed {
+    /// drop 即退订
+    _subscriber: RawSubscriber,
+    /// 订阅是否取历史
+    transient_local: bool,
+    state: Arc<TopicState>,
+}
+
 impl Discovery {
     async fn run(self, mut stop: watch::Receiver<bool>) {
         let changed = self.transport.graph_changed();
-        let mut subscribers: HashMap<String, RawSubscriber> = HashMap::new();
+        let mut subscribed: HashMap<String, Subscribed> = HashMap::new();
         loop {
             let notified = changed.notified();
             tokio::pin!(notified);
             notified.as_mut().enable();
-            for (topic, publisher) in self.pending(&subscribers) {
-                match self.subscribe(&topic, &publisher).await {
-                    Ok(subscriber) => {
-                        subscribers.insert(topic, subscriber);
+            for (topic, publisher) in self.pending(&subscribed) {
+                let state = subscribed.get(&topic).map(|s| s.state.clone());
+                match self.subscribe(&topic, &publisher, state).await {
+                    // 重订: 新订阅建好后再撤旧的, 交替期间的重复由 TopicState 去重
+                    Ok(new) => {
+                        if let Some(old) = subscribed.insert(topic, new) {
+                            let _ = tokio::task::spawn_blocking(move || drop(old)).await;
+                        }
                     }
                     Err(error) => self.shared.note_error(format!("订阅 {topic} 失败, 稍后重试: {error}")),
                 }
@@ -410,15 +455,16 @@ impl Discovery {
             }
         }
         // 撤订阅 (同步等 zenoh 撤销) 之后不再有新回调
-        let _ = tokio::task::spawn_blocking(move || drop(subscribers)).await;
+        let _ = tokio::task::spawn_blocking(move || drop(subscribed)).await;
         let _ = self.tx.send(Item::End);
     }
 
-    /// 清单内有发布端但还没订上的话题, 每话题一个代表发布端 (有 transient_local 的取它: 订阅时取得到历史).
-    fn pending(&self, subscribed: &HashMap<String, RawSubscriber>) -> Vec<(String, Endpoint)> {
+    /// 要 (重) 订的话题, 每话题一个代表发布端 (有 transient_local 的取它: 订阅时取得到历史):
+    /// 清单内有发布端但还没订上的, 以及已按 volatile 订上但现在有 transient_local 发布端的 (重订以补取其历史).
+    fn pending(&self, subscribed: &HashMap<String, Subscribed>) -> Vec<(String, Endpoint)> {
         let mut found: HashMap<String, Endpoint> = HashMap::new();
         for publisher in self.transport.publishers() {
-            if !self.wanted.contains(&publisher.topic) || subscribed.contains_key(&publisher.topic) {
+            if !self.wanted.contains(&publisher.topic) {
                 continue;
             }
             let entry = found.entry(publisher.topic.clone()).or_insert_with(|| publisher.clone());
@@ -426,24 +472,42 @@ impl Discovery {
                 *entry = publisher;
             }
         }
-        found.into_iter().collect()
+        found
+            .into_iter()
+            .filter(|(topic, publisher)| match subscribed.get(topic) {
+                None => true,
+                Some(current) => publisher.qos.transient_local && !current.transient_local,
+            })
+            .collect()
     }
 
-    async fn subscribe(&self, topic: &str, publisher: &Endpoint) -> Result<RawSubscriber, zenoh::Error> {
-        let type_name = publisher.ros_type();
-        let state = Arc::new(TopicState {
-            name: topic.into(),
-            decodable: self.registry.check(&type_name, Some(&publisher.type_hash)).is_ok(),
-            type_name,
-            counters: Mutex::default(),
-            written: AtomicU64::new(0),
+    /// 按代表发布端订阅 `topic`. `state` 为重订时沿用的话题统计 (去重记录也在其中).
+    async fn subscribe(
+        &self,
+        topic: &str,
+        publisher: &Endpoint,
+        state: Option<Arc<TopicState>>,
+    ) -> Result<Subscribed, zenoh::Error> {
+        let resubscribe = state.is_some();
+        let state = state.unwrap_or_else(|| {
+            let type_name = publisher.ros_type();
+            Arc::new(TopicState {
+                name: topic.into(),
+                decodable: self.registry.check(&type_name, Some(&publisher.type_hash)).is_ok(),
+                type_name,
+                counters: Mutex::default(),
+                written: AtomicU64::new(0),
+            })
         });
-        let qos = Qos { transient_local: publisher.qos.transient_local, depth: Some(COLLECT_DEPTH), ..Qos::default() };
+        let transient_local = publisher.qos.transient_local;
+        let qos = Qos { transient_local, depth: Some(COLLECT_DEPTH), ..Qos::default() };
         let (tx, registry, shared) = (self.tx.clone(), self.registry.clone(), self.shared.clone());
         let on_sample = {
             let state = state.clone();
             move |sample: RawSample| {
-                state.on_arrival(&sample, &registry);
+                if !state.on_arrival(&sample, &registry) {
+                    return;
+                }
                 shared.queue_depth.fetch_add(1, Ordering::Relaxed);
                 if tx.send(Item::Sample(state.clone(), sample)).is_err() {
                     shared.queue_depth.fetch_sub(1, Ordering::Relaxed);
@@ -451,12 +515,18 @@ impl Discovery {
             }
         };
         // 先登记: transient_local 历史在订阅建立期间就会到
-        self.shared.topics.lock().unwrap_or_else(|e| e.into_inner()).insert(topic.into(), state);
-        let result = self.transport.subscribe(publisher, qos, on_sample).await;
-        if result.is_err() {
-            self.shared.topics.lock().unwrap_or_else(|e| e.into_inner()).remove(topic);
+        if !resubscribe {
+            self.shared.topics.lock().unwrap_or_else(|e| e.into_inner()).insert(topic.into(), state.clone());
         }
-        result
+        match self.transport.subscribe(publisher, qos, on_sample).await {
+            Ok(subscriber) => Ok(Subscribed { _subscriber: subscriber, transient_local, state }),
+            Err(error) => {
+                if !resubscribe {
+                    self.shared.topics.lock().unwrap_or_else(|e| e.into_inner()).remove(topic);
+                }
+                Err(error)
+            }
+        }
     }
 }
 
@@ -474,17 +544,29 @@ mod tests {
         }
     }
 
-    /// 延迟分布只算最近 LATENCY_WINDOW 条: 早先的大延迟滚出窗口后不再影响 max.
+    /// 同一发布端同一序号到两次 (重订交替期间) 只计一次, 第二次不写盘.
     #[test]
-    fn latency_covers_recent_window_only() {
-        let registry = Registry::builtin();
-        let topic = TopicState {
+    fn duplicate_sample_is_dropped() {
+        let (registry, topic) = (Registry::builtin(), topic_state());
+        let accepted: Vec<bool> = [1, 2, 1, 3, 2].iter().map(|&seq| topic.on_arrival(&sample(1_000, seq), &registry)).collect();
+        let stats = topic.stats();
+        assert_eq!((accepted, stats.received, stats.gaps), (vec![true, true, false, true, false], 3, 0));
+    }
+
+    fn topic_state() -> TopicState {
+        TopicState {
             name: "/t".into(),
             type_name: "std_msgs/msg/String".into(),
             decodable: false,
             counters: Mutex::default(),
             written: AtomicU64::new(0),
-        };
+        }
+    }
+
+    /// 延迟分布只算最近 LATENCY_WINDOW 条: 早先的大延迟滚出窗口后不再影响 max.
+    #[test]
+    fn latency_covers_recent_window_only() {
+        let (registry, topic) = (Registry::builtin(), topic_state());
         topic.on_arrival(&sample(5_000_000_000, 1), &registry);
         for i in 0..LATENCY_WINDOW as i64 {
             topic.on_arrival(&sample(1_000 + i, i + 2), &registry);
