@@ -53,6 +53,10 @@ impl Session {
         Ok(Session { inner: Arc::new(Inner { transport, registry: Arc::new(registry) }) })
     }
 
+    pub(crate) fn transport(&self) -> &Transport {
+        &self.inner.transport
+    }
+
     pub fn registry(&self) -> &Arc<Registry> {
         &self.inner.registry
     }

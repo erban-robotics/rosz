@@ -112,6 +112,8 @@ impl From<Error> for Failure {
             Error::Connect { .. } => "connect",
             Error::UnknownTopic { .. } => "unknown_topic",
             Error::Zenoh(_) => "zenoh",
+            Error::UnknownType(_) => "unknown_type",
+            Error::Encode(_) => "encode",
         };
         let candidates = match &error {
             Error::UnknownTopic { candidates, .. } => candidates.clone(),

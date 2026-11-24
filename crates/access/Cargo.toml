@@ -1,6 +1,6 @@
 [package]
 name = "rosz-access"
-description = "不装 ROS, 直连 Zenoh 发现与订阅 rmw_zenoh 的 ROS 2 话题"
+description = "不装 ROS, 直连 Zenoh 发现, 订阅与发布 rmw_zenoh 的 ROS 2 话题"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
