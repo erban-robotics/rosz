@@ -85,3 +85,17 @@ fn malformed_input_is_an_error() {
     }
     assert_eq!(accepted, Vec::<String>::new());
 }
+
+#[test]
+fn ros2msg_schema_matches_erban_recorder() {
+    // 参照由 tests/e2e/gen_message_schema.py 从 erban-caring 录制器的 episode_data.message_schema (rosbags) 生成
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/e2e/message_schema.json");
+    let expected: serde_json::Map<String, Json> = serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+    let registry = Registry::builtin();
+    let wrong: Vec<&String> = expected
+        .iter()
+        .filter(|(ty, text)| registry.ros2msg_schema(ty).ok().as_deref() != text.as_str())
+        .map(|(ty, _)| ty)
+        .collect();
+    assert_eq!(wrong, Vec::<&String>::new());
+}
