@@ -11,7 +11,7 @@ rosz 的共享可视化 UI 包: 数据源状态, 播放时钟与回放 / 实时�
 产物挂在 rosz 的 [GitHub Release](https://github.com/erban-robotics/rosz/releases), 不发公共平台, 依赖写下载地址精确钉版本:
 
 ```json
-"@erban-robotics/rosz-ui": "https://github.com/erban-robotics/rosz/releases/download/v0.4.0/erban-robotics-rosz-ui-0.4.0.tgz"
+"@erban-robotics/rosz-ui": "https://github.com/erban-robotics/rosz/releases/download/v0.5.0/erban-robotics-rosz-ui-0.5.0.tgz"
 ```
 
 npm 12 起默认拒装远程 tgz, 项目 `.npmrc` 写 `allow-remote=all`. 本包依赖同一 Release 上同版本的 rosz-wasm tgz, 随之装上. 0.3.0 及以前在旧仓库 erban-robotics/rosz-ui 的 Release.

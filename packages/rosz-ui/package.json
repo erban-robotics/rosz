@@ -1,6 +1,6 @@
 {
   "name": "@erban-robotics/rosz-ui",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "rosz 共享可视化 UI 包: 数据源状态, 播放时钟与回放 / 实时查看面板",
   "license": "MIT",
   "repository": {

@@ -6,13 +6,13 @@
 
 ## 安装
 
-产物都挂在 [GitHub Release](https://github.com/erban-robotics/rosz/releases), 不发公共平台. 以 `v0.4.0` 为例:
+产物都挂在 [GitHub Release](https://github.com/erban-robotics/rosz/releases), 不发公共平台. 以 `v0.5.0` 为例:
 
-- Python (x86_64 / aarch64, Python 3.8+, glibc 2.17+; ROS1 Noetic 容器的系统 python3.8 可直接装): `pip install rosz --find-links https://github.com/erban-robotics/rosz/releases/expanded_assets/v0.4.0`
-- CLI 与查看器: 下载 `rosz-0.4.0-linux-x86_64` (或 `-aarch64`), musl 静态单文件, 查看器前端已嵌入, `chmod +x` 即用 (`rosz view` 即查看器)
-- npm (浏览器解码): `"@erban-robotics/rosz-wasm": "https://github.com/erban-robotics/rosz/releases/download/v0.4.0/erban-robotics-rosz-wasm-0.4.0.tgz"`. npm 12 起默认 `allow-remote=none`, 拒装远程 tgz, 需在项目 `.npmrc` 写 `allow-remote=all` (或安装时加 `--allow-remote=all`)
-- npm (共享 UI 包): `"@erban-robotics/rosz-ui": "https://github.com/erban-robotics/rosz/releases/download/v0.4.0/erban-robotics-rosz-ui-0.4.0.tgz"`, 同样需 `allow-remote=all`, 依赖的同版本 rosz-wasm 随之装上. 接入方式见 [packages/rosz-ui/README.md](packages/rosz-ui/README.md)
-- Rust: `rosz-access = { git = "https://github.com/erban-robotics/rosz", tag = "v0.4.0" }` (只解码用 `rosz-decode`)
+- Python (x86_64 / aarch64, Python 3.8+, glibc 2.17+; ROS1 Noetic 容器的系统 python3.8 可直接装): `pip install rosz --find-links https://github.com/erban-robotics/rosz/releases/expanded_assets/v0.5.0`
+- CLI 与查看器: 下载 `rosz-0.5.0-linux-x86_64` (或 `-aarch64`), musl 静态单文件, 查看器前端已嵌入, `chmod +x` 即用 (`rosz view` 即查看器)
+- npm (浏览器解码): `"@erban-robotics/rosz-wasm": "https://github.com/erban-robotics/rosz/releases/download/v0.5.0/erban-robotics-rosz-wasm-0.5.0.tgz"`. npm 12 起默认 `allow-remote=none`, 拒装远程 tgz, 需在项目 `.npmrc` 写 `allow-remote=all` (或安装时加 `--allow-remote=all`)
+- npm (共享 UI 包): `"@erban-robotics/rosz-ui": "https://github.com/erban-robotics/rosz/releases/download/v0.5.0/erban-robotics-rosz-ui-0.5.0.tgz"`, 同样需 `allow-remote=all`, 依赖的同版本 rosz-wasm 随之装上. 接入方式见 [packages/rosz-ui/README.md](packages/rosz-ui/README.md)
+- Rust: `rosz-access = { git = "https://github.com/erban-robotics/rosz", tag = "v0.5.0" }` (只解码用 `rosz-decode`)
 
 ## router 地址
 
