@@ -7,6 +7,7 @@ use std::{fs, io};
 use thiserror::Error;
 
 use crate::cdr::{self, DecodeError, Lookup};
+use crate::encode::{self, EncodeError};
 use crate::hash;
 use crate::msg::{self, BaseType, MessageDef, ParseError, normalize_type_name};
 use crate::value::Value;
@@ -139,6 +140,13 @@ impl Registry {
     pub fn decode<'a>(&self, name: &str, payload: &'a [u8]) -> Result<Value<'a>, DecodeError> {
         let def = self.get(name).ok_or_else(|| DecodeError::MissingType(name.into()))?;
         cdr::decode(self, def, payload)
+    }
+
+    /// 按类型名把值树编码为 CDR 字节 (含 4 字节封装头, 小端), 与 rclpy (fastcdr) 序列化逐字节一致 (padding 写 0).
+    /// 值树可以是解码结果, 也可以是宽松形状 (见 [`EncodeError`] 所在模块说明): 按定义收窄并校验, 坏值不编出字节.
+    pub fn encode(&self, name: &str, value: &Value) -> Result<Vec<u8>, EncodeError> {
+        let def = self.get(name).ok_or_else(|| EncodeError::MissingType(name.into()))?;
+        encode::encode(self, def, value)
     }
 
     /// 首字段为 `std_msgs/Header` 时只解其 stamp, 返回纳秒; 否则为 None.
