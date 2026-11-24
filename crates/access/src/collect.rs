@@ -81,6 +81,8 @@ impl Default for CollectOptions {
 pub enum CollectError {
     #[error("建 {path} 失败: {source}")]
     Create { path: String, source: io::Error },
+    #[error("建采集写盘线程失败: {0}")]
+    Spawn(io::Error),
     #[error("写 MCAP 失败: {0}")]
     Mcap(#[from] mcap::McapError),
     #[error("采集写盘线程异常退出")]
@@ -160,7 +162,7 @@ impl Session {
             thread::Builder::new()
                 .name("rosz-collect-writer".into())
                 .spawn(move || write_loop(writer, rx, &shared, &registry))
-                .map_err(|source| CollectError::Create { path: path.display().to_string(), source })?
+                .map_err(CollectError::Spawn)?
         };
         let (stop, stop_rx) = watch::channel(false);
         let wanted = topics.iter().map(|t| format!("/{}", t.trim_matches('/'))).collect();

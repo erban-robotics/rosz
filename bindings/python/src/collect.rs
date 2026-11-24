@@ -12,7 +12,8 @@ use crate::RUNTIME;
 fn to_py_err(error: CollectError) -> PyErr {
     match error {
         CollectError::Create { .. } => PyOSError::new_err(error.to_string()),
-        _ => PyRuntimeError::new_err(error.to_string()),
+        // 建线程失败同 Python threading (RuntimeError)
+        CollectError::Spawn(_) | CollectError::Mcap(_) | CollectError::WriterPanicked => PyRuntimeError::new_err(error.to_string()),
     }
 }
 

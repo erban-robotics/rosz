@@ -137,7 +137,7 @@ impl SrvType {
 fn qualify(transport: &Transport, name: &str) -> Result<String, Error> {
     let node = transport.node().node_entity();
     hiroz::topic_name::qualify_service_name(name, &node.namespace, &node.name)
-        .map_err(|e| Error::Zenoh(format!("服务名 {name} 不合法: {e}").into()))
+        .map_err(|e| Error::InvalidArgument(format!("服务名 {name} 不合法: {e}")))
 }
 
 impl Session {
@@ -191,7 +191,7 @@ impl Session {
             let thread = thread::Builder::new()
                 .name(format!("rosz-srv-{i}"))
                 .spawn(move || worker.run())
-                .map_err(|e| Error::Zenoh(format!("建工作线程失败: {e}").into()))?;
+                .map_err(Error::Spawn)?;
             workers.push(thread);
         }
         Ok(Service { server: Some(server), sender, workers, service, srv_type: srv.name, _transport: transport })

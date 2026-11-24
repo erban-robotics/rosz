@@ -34,7 +34,8 @@ pub(crate) fn to_py_err(py: Python<'_>, error: Error) -> PyErr {
             err
         }
         Error::NoRouter | Error::Connect { .. } => PyConnectionError::new_err(message),
-        Error::Zenoh(_) => PyRuntimeError::new_err(message),
+        Error::Zenoh(_) | Error::Spawn(_) => PyRuntimeError::new_err(message),
+        Error::InvalidArgument(_) => PyValueError::new_err(message),
         Error::UnknownType(_) => PyLookupError::new_err(message),
         Error::Encode(e) => publish::encode_error(py, &e),
         Error::Decode(_) => PyValueError::new_err(message),
