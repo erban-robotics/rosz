@@ -45,6 +45,12 @@ pub enum Error {
     /// 收到的数据不合定义 (如服务应答)
     #[error(transparent)]
     Decode(#[from] DecodeError),
+    /// 参数不合法 (如服务名含非法字符)
+    #[error("{0}")]
+    InvalidArgument(String),
+    /// 建线程失败 (系统资源不足等)
+    #[error("建线程失败: {0}")]
+    Spawn(std::io::Error),
     #[error("zenoh: {0}")]
     Zenoh(zenoh::Error),
 }

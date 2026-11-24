@@ -6,6 +6,11 @@
         第 i 条 (0 起) header.stamp = <首个 stamp 秒> + i 毫秒. 连跑两次即 "发布进程重启".
     python3 publish_collect.py latched <秒>
         /collect/latched String, transient_local keep_last(5): 一启动就发 "latched0".."latched2" 三条, 再存活 <秒> 后退出.
+    python3 publish_collect.py mixed_volatile <条数>
+        /collect/mixed String, volatile. 等到有订阅端才开始, 以 20 Hz 发 "v0".."v<条数-1>" 后退出.
+    python3 publish_collect.py mixed_latched <秒>
+        /collect/mixed String, transient_local keep_last(5): 一启动就发 "t0".."t2" 三条, 再存活 <秒> 后退出.
+        与 mixed_volatile 同话题: 先有 volatile 发布端, 后上线 transient_local 发布端.
 """
 
 import sys
@@ -19,6 +24,7 @@ from std_msgs.msg import Header, String
 
 LATE_TOPIC = "/collect/late"
 LATCHED_TOPIC = "/collect/latched"
+MIXED_TOPIC = "/collect/mixed"
 SUBSCRIBER_WAIT_SEC = 20.0
 # 发完到退出之间留给订阅端接收的时间
 LINGER_SEC = 1.0
@@ -45,12 +51,25 @@ def late(node, first_sec, count):
     spin_for(node, LINGER_SEC)
 
 
-def latched(node, seconds):
+def latched(node, seconds, topic=LATCHED_TOPIC, prefix="latched"):
     qos = QoSProfile(depth=5, durability=DurabilityPolicy.TRANSIENT_LOCAL)
-    publisher = node.create_publisher(String, LATCHED_TOPIC, qos)
+    publisher = node.create_publisher(String, topic, qos)
     for i in range(3):
-        publisher.publish(String(data=f"latched{i}"))
+        publisher.publish(String(data=f"{prefix}{i}"))
     spin_for(node, seconds)
+
+
+def mixed_volatile(node, count):
+    publisher = node.create_publisher(String, MIXED_TOPIC, 10)
+    deadline = time.monotonic() + SUBSCRIBER_WAIT_SEC
+    while publisher.get_subscription_count() == 0:
+        if time.monotonic() > deadline:
+            sys.exit(f"{SUBSCRIBER_WAIT_SEC} 秒内没有订阅端")
+        spin_for(node, 0.05)
+    for i in range(count):
+        publisher.publish(String(data=f"v{i}"))
+        spin_for(node, 0.05)
+    spin_for(node, LINGER_SEC)
 
 
 def main():
@@ -59,6 +78,10 @@ def main():
     mode, *args = sys.argv[1:]
     if mode == "late":
         late(node, int(args[0]), int(args[1]))
+    elif mode == "mixed_volatile":
+        mixed_volatile(node, int(args[0]))
+    elif mode == "mixed_latched":
+        latched(node, float(args[0]), MIXED_TOPIC, "t")
     else:
         latched(node, float(args[0]))
     node.destroy_node()

@@ -157,3 +157,11 @@ def test_bad_request_and_unknown_type_are_rejected(rz):
     with pytest.raises(LookupError) as unknown:
         rz.create_client("nope/srv/Nope", "/rosz/nope")
     assert (bad.value.path, "nope/srv/Nope" in str(unknown.value)) == ("data", True)
+
+
+def test_invalid_service_name_raises_value_error(rz):
+    with pytest.raises(ValueError) as client:
+        rz.create_client("std_srvs/srv/SetBool", "/rosz/bad name")
+    with pytest.raises(ValueError) as server:
+        rz.create_service("std_srvs/srv/SetBool", "/rosz/bad-name", set_bool)
+    assert ("bad name" in str(client.value), "bad-name" in str(server.value)) == (True, True)

@@ -1,6 +1,6 @@
 # rosz
 
-不装 ROS 即可读取 ROS 2 (rmw_zenoh) 话题: 直连 Zenoh router, 靠 liveliness token 发现话题, 按内置 `.msg` / `.srv` (common_interfaces jazzy 全套 + erban 自定义) 通用解码, 并解码 JPEG 与深度 (`16UC1; zstd`, `16UC1; compressedDepth`). 同一份 Rust 代码出 Rust 库, Python wheel, 浏览器 WASM 与 `rosz` 命令行; 另有共享可视化 UI 包 rosz-ui (`packages/rosz-ui`, ADP, erban-caring webapp 与查看器共用).
+不装 ROS 即可读取 ROS 2 (rmw_zenoh) 话题: 直连 Zenoh router, 靠 liveliness token 发现话题, 按内置 `.msg` / `.srv` (common_interfaces jazzy 全套 + audio_common_msgs + erban 自定义) 通用解码, 并解码 JPEG 与深度 (`16UC1; zstd`, `16UC1; compressedDepth`). 同一份 Rust 代码出 Rust 库, Python wheel, 浏览器 WASM 与 `rosz` 命令行; 另有共享可视化 UI 包 rosz-ui (`packages/rosz-ui`, ADP, erban-caring webapp 与查看器共用).
 
 支持订阅, 发布, 采集写 MCAP, 服务的 server 与 client (不含 action). 传输层建在 hiroz 0.2.1 之上 (rmw_zenoh 线协议, 按类型名 + hash 的原始订阅与 ROS 图; zenoh 钉 1.9.0, 与现场 rmw_zenoh_cpp 0.2.11 / router 1.7.2 互通), 以 client 模式连 router.
 
@@ -73,11 +73,11 @@ let collector = session.collect("ep.mcap", &["/joint_states"], rosz_access::Coll
 let stats = collector.stop().await?;
 ```
 
-- 发现驱动订阅: 清单里开录时还没有发布端的话题 (含发布进程中途重启) 一上线即订上; transient_local 话题先取发布端缓存的历史 (至多 1000 条). 收不到的话题不报错, 只是不在统计里
+- 发现驱动订阅: 清单里开录时还没有发布端的话题 (含发布进程中途重启) 一上线即订上; transient_local 话题先取发布端缓存的历史 (至多 1000 条); 已按 volatile 订上的话题后来出现 transient_local 发布端时改用 transient_local 重订补取其历史, 按 (发布端 gid, 序号) 去重. 收不到的话题不报错, 只是不在统计里
 - 不丢: zenoh 回调只入无界队列, 独立写盘线程写 MCAP; `stop` 撤掉订阅后写完队列再封口
 - 每话题一个 channel, 消息编码 `cdr`; `log_time` = 本机接收时刻, `publish_time` = attachment 源时间戳, `sequence` = 发布端序号低 32 位 (无 attachment 时为接收时刻与 0). schema 为 `ros2msg` 文本, 由 rosz 注册表生成, 与 rosbags `generate_msgdef` (erban-caring 原录制器) 逐字一致; 注册表没有的类型 schema 留空照写
 - chunk 压缩 `none` (默认) / `zstd` / `lz4`, chunk 大小默认 768 KiB
-- 统计 (Python dict, CLI JSON 同结构): `topics` 每话题 `type`, `received`, `written`, `gaps` (按发布端 gid 各自的序号缺口), `publisher_restarts`, `last_receive_time_ns`, `last_header_stamp_ns` (最近一条的 Header.stamp), `latency_ns` (`p50` / `p95` / `max`, 接收减源时间戳); 另有 `written`, `queue_depth`, `last_write_time_ns`, `errors`
+- 统计 (Python dict, CLI JSON 同结构): `topics` 每话题 `type`, `received`, `written`, `gaps` (按发布端 gid 各自的序号缺口), `publisher_restarts`, `last_receive_time_ns`, `last_header_stamp_ns` (最近一条的 Header.stamp), `latency_ns` (`p50` / `p95` / `max`, 接收减源时间戳, 只算最近 1000 条的滑动窗口, 最近秩分位); 另有 `written`, `queue_depth`, `last_write_time_ns`, `errors`
 - 不内置 "就绪" 与 "追到停止时刻": 由调用方看统计自己判 (如等各话题 `received > 0`, 等 `last_header_stamp_ns` 追过停止时刻再 `stop`)
 
 订阅到的 `Message` 带发布端序号 `sequence` (attachment, 每个发布端从 1 起).
@@ -164,7 +164,7 @@ if let Some(msg) = session.latest("/joint_states", std::time::Duration::from_sec
 
 ## 浏览器 (WASM)
 
-见 [bindings/wasm/README.md](bindings/wasm/README.md). 解码, zstd, 16 位 PNG 同一个模块, 约 310 KB (gzip 130 KB).
+见 [bindings/wasm/README.md](bindings/wasm/README.md). 解码, zstd, 16 位 PNG 同一个模块, 约 320 KB (gzip 130 KB; `bindings/wasm/build.sh` 未装 wasm-opt 时实测).
 
 ## 仓库布局
 

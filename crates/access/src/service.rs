@@ -18,7 +18,7 @@ use std::thread::{self, JoinHandle, ThreadId};
 use std::time::Duration;
 
 use hiroz::attachment::{Attachment, GidArray};
-use hiroz::entity::{EndpointEntity, EndpointKind, Entity, TypeHash, TypeInfo};
+use hiroz::entity::{EndpointEntity, EndpointKind, Entity, TypeInfo};
 use hiroz::msg::ZService;
 use hiroz::service::ZServer;
 use zenoh::Wait as _;
@@ -30,7 +30,7 @@ use zenoh::query::{ConsolidationMode, Querier, Query, QueryTarget};
 use rosz_decode::msg::{Array, BaseType, FieldType, Primitive};
 
 use crate::session::Session;
-use crate::transport::Transport;
+use crate::transport::{self, Transport};
 use crate::{Error, Registry, Value};
 
 /// 查询超时: 同 rmw_zenoh_cpp 默认配置的 `queries_default_timeout` (600 s). `call` 不给超时时最多等这么久.
@@ -40,6 +40,9 @@ pub const QUERY_TIMEOUT: Duration = Duration::from_secs(600);
 pub const RECEIPT_INVALID_REQUEST: u8 = 1;
 /// 回执约定的公共码: 服务端自身问题 (未捕获异常等)
 pub const RECEIPT_INTERNAL_ERROR: u8 = 5;
+
+/// 只有 CDR 封装头 (小端) 的空消息: 零值应答都编不出时的兜底
+const CDR_LE_HEADER: [u8; 4] = [0, 1, 0, 0];
 
 /// 原始字节服务类型占位: 请求与应答都是已编码的 CDR, 从不按它序列化.
 struct RawSrv;
@@ -126,9 +129,7 @@ impl SrvType {
         if registry.get(&request).is_none() || registry.get(&response).is_none() {
             return Err(unknown());
         }
-        let hash = registry.rihs01(name).map_err(|_| unknown())?;
-        let dds = hiroz_schema::type_name::dds_from_canonical(name).ok_or_else(unknown)?;
-        let type_info = TypeInfo::new(&dds, TypeHash::from_rihs_string(&hash).ok_or_else(unknown)?);
+        let type_info = transport::type_info(registry, name).ok_or_else(unknown)?;
         Ok(SrvType { name: name.into(), request, response, type_info })
     }
 }
@@ -137,7 +138,7 @@ impl SrvType {
 fn qualify(transport: &Transport, name: &str) -> Result<String, Error> {
     let node = transport.node().node_entity();
     hiroz::topic_name::qualify_service_name(name, &node.namespace, &node.name)
-        .map_err(|e| Error::Zenoh(format!("服务名 {name} 不合法: {e}").into()))
+        .map_err(|e| Error::InvalidArgument(format!("服务名 {name} 不合法: {e}")))
 }
 
 impl Session {
@@ -171,10 +172,7 @@ impl Session {
                 let _ = tx.send(query);
             }
         };
-        let server = tokio::task::spawn_blocking(move || builder.build_with_callback(on_query))
-            .await
-            .map_err(|e| Error::Zenoh(e.to_string().into()))?
-            .map_err(Error::Zenoh)?;
+        let server = transport::blocking(move || builder.build_with_callback(on_query)).await.map_err(Error::Zenoh)?;
 
         let worker = Arc::new(Worker {
             service: service.clone(),
@@ -191,7 +189,7 @@ impl Session {
             let thread = thread::Builder::new()
                 .name(format!("rosz-srv-{i}"))
                 .spawn(move || worker.run())
-                .map_err(|e| Error::Zenoh(format!("建工作线程失败: {e}").into()))?;
+                .map_err(Error::Spawn)?;
             workers.push(thread);
         }
         Ok(Service { server: Some(server), sender, workers, service, srv_type: srv.name, _transport: transport })
@@ -205,7 +203,7 @@ impl Session {
         let blocking = transport.clone();
         let entity_service = service.clone();
         let type_info = srv.type_info.clone();
-        let (querier, token, gid) = tokio::task::spawn_blocking(move || {
+        let (querier, token, gid) = transport::blocking(move || {
             let node = blocking.node();
             let entity = EndpointEntity {
                 id: node.next_entity_id(),
@@ -225,10 +223,9 @@ impl Session {
                 .wait()?;
             let token = session.liveliness().declare_token((*format.liveliness_key_expr(&entity, &session.zid())?).clone()).wait()?;
             let gid = hiroz::entity::endpoint_gid(&entity).ok_or("客户端实体缺节点身份")?;
-            Ok::<_, zenoh::Error>((querier, token, gid))
+            Ok((querier, token, gid))
         })
         .await
-        .map_err(|e| Error::Zenoh(e.to_string().into()))?
         .map_err(Error::Zenoh)?;
         Ok(Client {
             inner: Arc::new(ClientInner {
@@ -392,7 +389,7 @@ impl Worker {
                 }
             }
         }
-        self.registry.encode(&self.srv.response, &zero).unwrap_or_else(|_| vec![0, 1, 0, 0])
+        self.registry.encode(&self.srv.response, &zero).unwrap_or_else(|_| CDR_LE_HEADER.to_vec())
     }
 
     /// 应答类型顶层的回执字段名: 类型为 `*/msg/Receipt` 且有 `code` (uint8), `message`, `detail_json` (string).
@@ -460,7 +457,7 @@ impl Client {
     /// 等到有服务端 (只看 SS token); `timeout` 为 None 时一直等. 超时为 false.
     pub async fn wait_for_service(&self, timeout: Option<Duration>) -> bool {
         let deadline = timeout.map(|t| tokio::time::Instant::now() + t);
-        let notify = self.inner.transport.node().graph().change_notify.clone();
+        let notify = self.inner.transport.graph_changed();
         loop {
             let changed = notify.notified();
             tokio::pin!(changed);

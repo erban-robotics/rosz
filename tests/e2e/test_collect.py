@@ -7,6 +7,7 @@ schema 对照 message_schema.json 由 gen_message_schema.py 从 erban-caring 录
 
 import json
 import os
+import signal
 import struct
 import subprocess
 import time
@@ -116,6 +117,32 @@ def test_collect_stats_while_running_and_after_stop(recording):
     ) == (True, True, True, (0, 1, late_stamps()[-1]), True)
 
 
+MIXED = "/collect/mixed"
+MIXED_COUNT = 60
+
+
+def test_collect_takes_history_of_transient_local_publisher_joining_volatile_topic(tmp_path):
+    """先有 volatile 发布端并已订上, 后上线 transient_local 发布端: 补取其历史, 两个发布端的消息都不重不丢."""
+    rz = rosz.connect()
+    container_publish("mixed_volatile", MIXED_COUNT, detach=True)
+    path = tmp_path / "mixed.mcap"
+    collector = rz.collect(str(path), [MIXED])
+    deadline = time.monotonic() + 10
+    while collector.stats()["topics"].get(MIXED, {}).get("received", 0) < 5 and time.monotonic() < deadline:
+        time.sleep(0.05)
+    container_publish("mixed_latched", 1)
+    # 等 volatile 发布端发完 (20 Hz) 并退出
+    time.sleep(MIXED_COUNT / 20 + 1)
+    final = collector.stop()
+    _, _, messages = read_mcap(path)
+    texts = [cdr_string(m.data) for _, _, m in messages[MIXED]]
+    assert (
+        [t for t in texts if t.startswith("t")],
+        [t for t in texts if t.startswith("v")],
+        final["topics"][MIXED]["received"],
+    ) == (["t0", "t1", "t2"], [f"v{i}" for i in range(MIXED_COUNT)], MIXED_COUNT + 3)
+
+
 def test_message_carries_publisher_sequence():
     rz = rosz.connect()
     with rz.subscribe(["/joint_states"]) as subscription:
@@ -138,3 +165,20 @@ def test_cli_collect(tmp_path):
         90 < len(messages["/joint_states"]) < 110,
         len(messages["/tf_static"]),
     ) == (True, True, 1)
+
+
+def test_cli_collect_stops_on_sigint_while_printing_stats(tmp_path):
+    """统计打印得很频繁时 Ctrl-C 也不丢: 收到即封口退出, 输出最终统计."""
+    command = [os.environ["ROSZ_BIN"], "--json", "collect", "/joint_states", "--out", str(tmp_path / "sigint.mcap")]
+    exits = []
+    for _ in range(5):
+        process = subprocess.Popen([*command, "--stats-interval", "0.0005"], stdout=subprocess.PIPE, text=True)
+        time.sleep(1)
+        process.send_signal(signal.SIGINT)
+        try:
+            stdout, _ = process.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            stdout, _ = process.communicate()
+        exits.append((process.returncode, "/joint_states" in stdout.splitlines()[-1]))
+    assert exits == [(0, True)] * 5

@@ -133,6 +133,8 @@ impl From<Error> for Failure {
             Error::Connect { .. } => "connect",
             Error::UnknownTopic { .. } => "unknown_topic",
             Error::Zenoh(_) => "zenoh",
+            Error::InvalidArgument(_) => "invalid_argument",
+            Error::Spawn(_) => "spawn",
             Error::UnknownType(_) => "unknown_type",
             Error::Encode(_) => "encode",
             Error::Decode(_) => "decode",

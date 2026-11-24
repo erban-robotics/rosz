@@ -9,10 +9,11 @@ use rosz_access::{CollectError, CollectOptions, CollectStats, Compression, DEFAU
 
 use crate::RUNTIME;
 
-fn to_py_err(error: CollectError) -> PyErr {
+fn collect_error(error: CollectError) -> PyErr {
     match error {
         CollectError::Create { .. } => PyOSError::new_err(error.to_string()),
-        _ => PyRuntimeError::new_err(error.to_string()),
+        // 建线程失败同 Python threading (RuntimeError)
+        CollectError::Spawn(_) | CollectError::Mcap(_) | CollectError::WriterPanicked => PyRuntimeError::new_err(error.to_string()),
     }
 }
 
@@ -31,7 +32,7 @@ pub(crate) fn start(
     };
     let options = CollectOptions { compression, chunk_size: chunk_size.unwrap_or(DEFAULT_CHUNK_SIZE) };
     let names: Vec<&str> = topics.iter().map(String::as_str).collect();
-    let collector = py.detach(|| RUNTIME.block_on(session.collect(&path, &names, options))).map_err(to_py_err)?;
+    let collector = py.detach(|| RUNTIME.block_on(session.collect(&path, &names, options))).map_err(collect_error)?;
     Ok(Collector { inner: Mutex::new(Some(collector)), last: Mutex::new(None) })
 }
 
@@ -48,7 +49,7 @@ impl Collector {
     /// 当前统计 (stop 后为最终统计):
     /// `{"topics": {话题: {type, received, written, gaps, publisher_restarts, last_receive_time_ns,
     /// last_header_stamp_ns, latency_ns: {p50, p95, max} 或 None}}, "written", "queue_depth", "last_write_time_ns", "errors"}`.
-    /// 清单里还没有发布端的话题不在 `topics` 里.
+    /// 清单里还没有发布端的话题不在 `topics` 里. `latency_ns` 只算每话题最近 1000 条 (滑动窗口).
     fn stats<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let stats = match self.inner.lock().unwrap().as_ref() {
             Some(collector) => collector.stats(),
@@ -61,7 +62,7 @@ impl Collector {
     fn stop<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let collector = self.inner.lock().unwrap().take();
         if let Some(collector) = collector {
-            let stats = py.detach(|| RUNTIME.block_on(collector.stop())).map_err(to_py_err)?;
+            let stats = py.detach(|| RUNTIME.block_on(collector.stop())).map_err(collect_error)?;
             *self.last.lock().unwrap() = Some(stats);
         }
         self.stats(py)
