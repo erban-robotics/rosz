@@ -1,4 +1,4 @@
-//! rosz 解码: 按 `.msg` 定义把 ROS 2 消息 (XCDR1) 解成值树 (及反向编码), 由定义算 RIHS01, 解码相机图像与深度.
+//! rosz 解码: 按 `.msg` / `.srv` 定义把 ROS 2 消息 (XCDR1) 解成值树 (及反向编码), 由定义算 RIHS01, 解码相机图像与深度.
 //!
 //! 不依赖 zenoh, 可编 WASM.
 
@@ -9,6 +9,7 @@ pub mod media;
 pub mod msg;
 mod registry;
 mod schema;
+pub mod srv;
 mod value;
 
 pub use cdr::DecodeError;

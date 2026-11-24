@@ -117,7 +117,7 @@ pub struct MessageDef {
 
 const EMPTY_MESSAGE_FIELD: &str = "structure_needs_at_least_one_member";
 
-/// 解析一条 `.msg`. `name` 为 `包/msg/类型` (也接受 `包/类型`).
+/// 解析一条 `.msg`. `name` 为 `包/msg/类型` (也接受 `包/类型`); `.srv` 拆出的请求/应答段用 `包/srv/类型_Request` 等名.
 pub fn parse(name: &str, text: &str) -> Result<MessageDef, ParseError> {
     let name = normalize_type_name(name, None)
         .ok_or_else(|| ParseError { type_name: name.into(), line: 0, reason: "类型名应为 包/msg/类型".into() })?;
@@ -156,12 +156,12 @@ pub fn parse(name: &str, text: &str) -> Result<MessageDef, ParseError> {
     Ok(MessageDef { name, fields, constants, text: text.into(), is_empty })
 }
 
-/// `包/类型` 补成 `包/msg/类型`; 只有 `类型` 时按 `package` 补. 不合法返回 None.
+/// `包/类型` 补成 `包/msg/类型`; 只有 `类型` 时按 `package` 补; `包/msg/类型` 与 `包/srv/类型` 原样. 不合法返回 None.
 pub fn normalize_type_name(name: &str, package: Option<&str>) -> Option<String> {
     let parts: Vec<&str> = name.split('/').collect();
     let valid = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
     match parts.as_slice() {
-        [pkg, "msg", ty] if valid(pkg) && valid(ty) => Some(name.into()),
+        [pkg, "msg" | "srv", ty] if valid(pkg) && valid(ty) => Some(name.into()),
         [pkg, ty] if valid(pkg) && valid(ty) => Some(format!("{pkg}/msg/{ty}")),
         [ty] if valid(ty) => package.map(|p| format!("{p}/msg/{ty}")),
         _ => None,

@@ -1,4 +1,4 @@
-//! 把仓库 `messages/jazzy` 与 `messages/erban` 下的全部 `.msg` 编进二进制: 生成 `(类型名, 文本)` 表.
+//! 把仓库 `messages/jazzy` 与 `messages/erban` 下的全部 `.msg` 与 `.srv` 编进二进制: 生成 `(类型名, 文本)` 表.
 //! 文本去掉注释与空行再嵌入 (约 130 KB 减到 20 KB, WASM 体积要紧).
 
 use std::fmt::Write as _;
@@ -26,18 +26,20 @@ fn main() {
     fs::write(PathBuf::from(env::var("OUT_DIR").unwrap()).join("builtin.rs"), out).unwrap();
 }
 
-/// 收集 `<root>/<包>/msg/<类型>.msg`, 类型名为 `<包>/msg/<类型>`.
+/// 收集 `<root>/<包>/msg/<类型>.msg` 与 `<root>/<包>/srv/<类型>.srv`, 类型名为 `<包>/msg/<类型>` 或 `<包>/srv/<类型>`.
 fn collect(root: &Path, entries: &mut Vec<(String, PathBuf)>) {
     let mut packages: Vec<_> = fs::read_dir(root).unwrap().map(|e| e.unwrap().path()).collect();
     packages.sort();
     for package in packages {
-        let Ok(files) = fs::read_dir(package.join("msg")) else { continue };
         let package_name = package.file_name().unwrap().to_str().unwrap().to_owned();
-        for file in files {
-            let path = file.unwrap().path().canonicalize().unwrap();
-            if path.extension().is_some_and(|e| e == "msg") {
-                let stem = path.file_stem().unwrap().to_str().unwrap();
-                entries.push((format!("{package_name}/msg/{stem}"), path));
+        for kind in ["msg", "srv"] {
+            let Ok(files) = fs::read_dir(package.join(kind)) else { continue };
+            for file in files {
+                let path = file.unwrap().path().canonicalize().unwrap();
+                if path.extension().is_some_and(|e| e == kind) {
+                    let stem = path.file_stem().unwrap().to_str().unwrap();
+                    entries.push((format!("{package_name}/{kind}/{stem}"), path));
+                }
             }
         }
     }

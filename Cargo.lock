@@ -3024,9 +3024,11 @@ dependencies = [
  "hiroz-schema",
  "mcap",
  "rosz-decode",
+ "serde_json",
  "strsim",
  "thiserror 2.0.21",
  "tokio",
+ "tracing",
  "zenoh",
 ]
 

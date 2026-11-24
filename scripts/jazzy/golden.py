@@ -1,7 +1,7 @@
 """在 jazzy 容器里生成解码金样本: 按当前 RMW_IMPLEMENTATION 用 rclpy `serialize_message` 序列化, 参照值取 rclpy 消息对象.
 
 用法 (容器内, 见 setup.sh): python3 golden.py <输出目录>
-输出: <输出目录>/<rmw>/<样例>.cdr, <输出目录>/expected.json (样例 -> 类型与参照值), <输出目录>/hashes.json (类型 -> rosidl RIHS01)
+输出: <输出目录>/<rmw>/<样例>.cdr, <输出目录>/expected.json (样例 -> 类型与参照值), <输出目录>/hashes.json (类型 -> rosidl RIHS01, 含 .srv)
 """
 
 import array
@@ -113,11 +113,16 @@ def type_name(msg):
 
 def rosidl_hashes():
     hashes = {}
-    for path in glob.glob("/opt/ros/jazzy/share/*/msg/*.json") + glob.glob("/ws/install/share/*/msg/*.json"):
+    # .srv 的 json 含顶层类型与合成的 _Request/_Response/_Event, 四个都收
+    # (只收 rosz 内置或追加了 .srv 的包: messages/ 下有 srv 目录的)
+    srv = [p for p in glob.glob("/opt/ros/jazzy/share/*/srv/*.json") if glob.glob(f"/rosz/messages/*/{p.split('/')[-3]}/srv")]
+    for path in glob.glob("/opt/ros/jazzy/share/*/msg/*.json") + glob.glob("/ws/install/share/*/msg/*.json") + srv:
         with open(path) as f:
             data = json.load(f)
         name = data["type_description_msg"]["type_description"]["type_name"]
-        hashes[name] = next(h["hash_string"] for h in data["type_hashes"] if h["type_name"] == name)
+        names = [name] + [name + s for s in ("_Request", "_Response", "_Event")] if "/srv/" in name else [name]
+        for n in names:
+            hashes[n] = next(h["hash_string"] for h in data["type_hashes"] if h["type_name"] == n)
     return dict(sorted(hashes.items()))
 
 
